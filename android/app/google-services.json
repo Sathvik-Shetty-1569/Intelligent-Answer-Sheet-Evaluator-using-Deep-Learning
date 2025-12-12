@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1065584546582",
+    "project_id": "aianswerevaluator",
+    "storage_bucket": "aianswerevaluator.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1065584546582:android:c1a0cb00d70df89107f637",
+        "android_client_info": {
+          "package_name": "com.miniproject"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC992uaVZTeUaCFiyiwm_M3QE2Vkkj1Fr0"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
