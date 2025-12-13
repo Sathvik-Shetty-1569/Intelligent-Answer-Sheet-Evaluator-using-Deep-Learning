@@ -101,7 +101,7 @@ if (item.image && typeof item.image === 'string') {
       const options = {
         html: htmlContent,
         fileName: `${studentName.replace(/\s+/g, '_')}_Evaluation_${Date.now()}.pdf`,
-        directory: Platform.OS === 'android' ? RNFS.DownloadDirectoryPath : RNFS.DocumentDirectoryPath,
+        directory: Platform.OS === 'android' ? RNFS.ExternalDirectoryPath : RNFS.DocumentDirectoryPath,
       };
   
       const pdf = await RNHTMLtoPDF.convert(options);

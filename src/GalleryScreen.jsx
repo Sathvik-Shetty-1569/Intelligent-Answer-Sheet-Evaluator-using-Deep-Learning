@@ -65,7 +65,7 @@ const GalleryScreen = ({ route, navigation }) => {
       const uploadableImages = images.filter(img => img.base64);
 
      const response = await axios.post(
-  "http://10.224.44.199:5000/upload",
+  "http://192.168.0.194:5000/upload",
   {
     images: uploadableImages.map(img => `data:${img.type};base64,${img.base64}`)
   }
