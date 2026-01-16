@@ -43,74 +43,117 @@ const SaveResultsScreen = ({ route }) => {
   }));
 
   const generatePDF = async () => {
-    try {
-      // Create HTML content
-      let htmlContent = `
-        <html>
-          <head>
-            <style>
-              body { font-family: Arial; padding: 20px; }
-              .header { text-align: center; margin-bottom: 30px; }
-              .student-name { font-size: 24px; font-weight: bold; }
-              .timestamp { color: #666; margin-bottom: 20px; }
-              .score { font-size: 18px; color: ${performanceColor}; margin-bottom: 30px; }
-              .question { margin-bottom: 30px; border-bottom: 1px solid #eee; padding-bottom: 20px; }
-              .question-title { font-weight: bold; font-size: 16px; margin-bottom: 10px; }
-              .question-status { color: ${performanceColor}; margin-bottom: 10px; }
-              .question-marks { margin-bottom: 10px; }
-              .question-image { max-width: 100%; margin-top: 15px; }
-            </style>
-          </head>
-          <body>
-            <div class="header">
-              <div class="student-name">${studentName}'s Evaluation Report</div>
-              <div class="timestamp">Evaluated on: ${timestamp}</div>
-              <div class="score">Total Score: ${obtainedMarks}/${totalMarks} (${percentage}%)</div>
-            </div>
-      `;
-  
-      // Add each question to HTML
-      for (const item of questionDetails) {
-        let imageTag = '';
-if (item.image && typeof item.image === 'string') {
-  if (item.image.startsWith('data:image') && item.image.length > 200) {
-    imageTag = `<img class="question-image" src="${item.image}" />`;
-  } else if (await RNFS.exists(item.image)) {
-    const imageBase64 = await RNFS.readFile(item.image, 'base64');
-    imageTag = `<img class="question-image" src="data:image/png;base64,${imageBase64}" />`;
-  } else {
-    console.log('Skipping invalid or empty image:', item.image);
+  try {
+    let htmlContent = `
+      <html>
+        <head>
+          <style>
+            body {
+               font-family: Arial, sans-serif;
+    padding: 20px;
+    background-color: #fff;
+            }
+            .header {
+              text-align: center;
+              margin-bottom: 30px;
+            }
+            .student-name {
+              font-size: 24px;
+              font-weight: bold;
+            }
+            .timestamp {
+              color: #666;
+              margin-bottom: 10px;
+            }
+            .score {
+              font-size: 18px;
+              color: ${performanceColor};
+              margin-bottom: 30px;
+            }
+            .question {
+    margin-bottom: 30px;
+    border-bottom: 1px solid #eee;
+    padding-bottom: 20px;
+    word-wrap: break-word;
+    white-space: pre-wrap;
   }
-}
-
-  
-        htmlContent += `
-          <div class="question">
-            <div class="question-title">Question ${item.id}: ${item.question}</div>
-            <div class="question-status" style="color: ${item.statusColor}">Status: ${item.status}</div>
-            <div class="question-marks">Marks: ${item.marksObtained}/${item.totalMarks}</div>
-            ${imageTag}
-            ${item.explanation ? `<div class="question-explanation"><strong>AI Explanation:</strong> ${item.explanation}</div>` : ''}
+            .question-title {
+              font-weight: bold;
+              font-size: 16px;
+              margin-bottom: 8px;
+            }
+            .question-status {
+              margin-bottom: 6px;
+              font-size: 14px;
+            }
+            .question-marks {
+              margin-bottom: 10px;
+              font-size: 14px;
+            }
+            .question-explanation {
+              margin-top: 10px;
+              font-size: 14px;
+              line-height: 1.5;
+              word-wrap: break-word;
+    white-space: pre-wrap;
+            }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <div class="student-name">${studentName}'s Evaluation Report</div>
+            <div class="timestamp">Evaluated on: ${timestamp}</div>
+            <div class="score">
+              Total Score: ${obtainedMarks}/${totalMarks} (${percentage}%)
+            </div>
           </div>
-        `;
-      };
-  
-      htmlContent += `</body></html>`;
-  
-      // Generate PDF
-      const options = {
-        html: htmlContent,
-        fileName: `${studentName.replace(/\s+/g, '_')}_Evaluation_${Date.now()}.pdf`,
-        directory: Platform.OS === 'android' ? RNFS.ExternalDirectoryPath : RNFS.DocumentDirectoryPath,
-      };
-  
-      const pdf = await RNHTMLtoPDF.convert(options);
-      return pdf.filePath;
-    } catch (error) {
-      console.error('Error generating PDF:', error);
-      throw error;
+    `;
+
+    for (const item of questionDetails) {
+      htmlContent += `
+        <div class="question">
+          <div class="question-title">
+            Question ${item.id}: ${item.question}
+          </div>
+          <div class="question-status" style="color: ${item.statusColor}">
+            Status: ${item.status}
+          </div>
+          <div class="question-marks">
+            Marks: ${item.marksObtained}/${item.totalMarks}
+          </div>
+          ${
+            item.explanation
+              ? `<div class="question-explanation">
+                   <strong>AI Explanation:</strong> ${item.explanation}
+                 </div>`
+              : ''
+          }
+        </div>
+      `;
     }
-  };
+
+    htmlContent += `
+        </body>
+      </html>
+    `;
+
+    const options = {
+      html: htmlContent,
+      fileName: `${studentName.replace(/\s+/g, '_')}_Evaluation_${Date.now()}`,
+      directory:
+        Platform.OS === 'android'
+          ? RNFS.ExternalDirectoryPath
+          : RNFS.DocumentDirectoryPath,
+    };
+
+    const pdf = await RNHTMLtoPDF.convert(options);
+    return pdf.filePath;
+
+  } catch (error) {
+    console.error('Error generating PDF:', error);
+    throw error;
+  }
+};
 
   const handleDownload = async () => {
     try {

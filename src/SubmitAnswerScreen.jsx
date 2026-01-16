@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { View, ScrollView, Text, StyleSheet,Image, TouchableOpacity, TextInput, ActivityIndicator, Alert } from 'react-native';
+import { View, ScrollView, Text, StyleSheet, TouchableOpacity, TextInput, ActivityIndicator, Alert } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import { db } from '../firebaseConfig';
 import { getDoc, doc } from 'firebase/firestore';
@@ -48,10 +48,10 @@ const SubmitAnswerScreen = ({ route, navigation }) => {
   }, [modelId]);
   
 
-  const toggleExpand = (resultIndex, pairIndex) => {
+  const toggleExpand = (key) => {
     setExpandedItems(prev => ({
       ...prev,
-      [`${resultIndex}-${pairIndex}`]: !prev[`${resultIndex}-${pairIndex}`]
+      [key]: !prev[key]
     }));
   };
 
@@ -98,19 +98,11 @@ const SubmitAnswerScreen = ({ route, navigation }) => {
     try {
       // Create an array to store evaluation results
       const evaluationResults = [];
-      let allCroppedPairs = [];
-      
-
 
             for (const result of results) {
               if (!result?.qa_dict) {
                 console.warn('Result missing qa_dict:', result);
                 continue;
-              }
-      
-              // Collect all cropped pairs from all results
-              if (result.cropped_pairs) {
-                allCroppedPairs = [...allCroppedPairs, ...result.cropped_pairs];
               }
       
               const qaDict = result.qa_dict;
@@ -230,7 +222,7 @@ const totalPossible = evaluationResults.reduce(
       };
       // Show results to user
       
-      navigation.navigate('SaveResultsScreen', { finalData,croppedPairs: allCroppedPairs})
+      navigation.navigate('SaveResultsScreen', { finalData })
   
     } catch (error) {
       console.error('Error evaluating answers:', error);
@@ -260,37 +252,32 @@ const totalPossible = evaluationResults.reduce(
         </View>
 
        {results.map((result, resultIndex) => (
-       
                <View key={resultIndex} style={styles.resultBlock}>
-                 
-                
-                 {result.cropped_pairs.map((base64Image, pairIndex) => (
-                   <View key={pairIndex} style={styles.card}>
-       
-       
-                     <TouchableOpacity
-                       style={styles.cardHeader}
-                       onPress={() => toggleExpand(resultIndex, pairIndex)}
-                     >
-                       <Text style={styles.cardTitle}>
-                         Question {resultIndex + 1}-{pairIndex + 1}
-                       </Text>
-                       <Text style={styles.expandIcon}>
-                         {expandedItems[`${resultIndex}-${pairIndex}`] ? '▲' : '▼'}
-                       </Text>
-                     </TouchableOpacity>
-       
-                     {expandedItems[`${resultIndex}-${pairIndex}`] && (
-                       <View style={styles.cardContent}>
-                         <Image
-                           source={{ uri: base64Image }}
-                           style={styles.image}
-                           resizeMode="contain"
-                         />
-                       </View>
-                     )}
-                   </View>
-                 ))}
+                 {result.qa_dict && Object.entries(result.qa_dict).map(([questionKey, answer], pairIndex) => {
+                   const cardKey = `${resultIndex}-${pairIndex}`;
+                   return (
+                     <View key={cardKey} style={styles.card}>
+                       <TouchableOpacity
+                         style={styles.cardHeader}
+                         onPress={() => toggleExpand(cardKey)}
+                       >
+                         <Text style={styles.cardTitle}>
+                           {questionKey}
+                         </Text>
+                         <Text style={styles.expandIcon}>
+                           {expandedItems[cardKey] ? '▲' : '▼'}
+                         </Text>
+                       </TouchableOpacity>
+         
+                       {expandedItems[cardKey] && (
+                         <View style={styles.cardContent}>
+                           <Text style={styles.textLabel}>Answer:</Text>
+                           <Text style={styles.textContent}>{answer}</Text>
+                         </View>
+                       )}
+                     </View>
+                   );
+                 })}
                </View>
              ))}
 
@@ -422,13 +409,21 @@ const styles = StyleSheet.create({
   cardContent: {
     padding: 15,
   },
-  image: {
-    width: '100%',
-    height: 200,
-    borderRadius: 8,
+  textLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#555',
+    marginBottom: 8,
+  },
+  textContent: {
+    fontSize: 14,
+    color: '#333',
+    lineHeight: 20,
+    backgroundColor: '#f9f9f9',
+    padding: 10,
+    borderRadius: 6,
     borderWidth: 1,
-    borderColor: '#eee',
-    marginTop: 10,
+    borderColor: '#e0e0e0',
   },
   resultBlock: {
     marginBottom: 15,
