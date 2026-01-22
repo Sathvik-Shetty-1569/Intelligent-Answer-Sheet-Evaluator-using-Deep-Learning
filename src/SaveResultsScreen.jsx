@@ -71,9 +71,11 @@ const SaveResultsScreen = ({ route }) => {
               margin-bottom: 30px;
             }
             .question {
-    margin-bottom: 30px;
-    border-bottom: 1px solid #eee;
-    padding-bottom: 20px;
+    margin-bottom: 25px;
+    padding: 15px;
+    background-color: #f9f9f9;
+    border-radius: 8px;
+    border-left: 4px solid #3498db;
     word-wrap: break-word;
     white-space: pre-wrap;
   }

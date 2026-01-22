@@ -1,82 +1,79 @@
 import React, { useState } from 'react';
 import { FlatList, Image, StyleSheet, Dimensions, View, TouchableOpacity, Text, ActivityIndicator, Alert } from 'react-native';
-import { launchImageLibrary } from 'react-native-image-picker';
+import DocumentPicker from '@react-native-documents/picker';
+import RNFS from 'react-native-fs';
 import axios from 'axios';
 import { FLASK_SERVER_URL } from '@env';
 
 
 
 const GalleryScreen = ({ route, navigation }) => {
-  // Initialize with proper image objects containing both uri and base64
-  const [images, setImages] = useState(() => {
-    // Convert existing URIs to proper image objects if needed
-    const initialImages = route.params?.images || [];
-    return initialImages
-    .map(img => {
-      if (typeof img === 'string') {
-        console.warn('Image has no base64 data and will be skipped.');
-        return null;
-      }
-      return img;
-    })
-    .filter(Boolean); // remove nulls
-  });
-  
+  const [pdfFile, setPdfFile] = useState(null); // Store single PDF file
   const [isLoading, setIsLoading] = useState(false);
   const { width, height } = Dimensions.get('window');
 
-  const handleAddMore = async () => {
+  const handleSelectPDF = async () => {
     try {
-      const result = await launchImageLibrary({
-        mediaType: 'photo',
-        selectionLimit: 0, // 0 means no limit
-        includeBase64: true,
+      const result = await DocumentPicker.pick({
+        mode: 'open',
+        type: 'application/pdf', // Specific MIME type for PDFs
+        copyTo: 'cachesDirectory',
       });
 
-      if (result.assets) {
-        const newImages = result.assets.map(asset => {
-          console.log('Asset received:', {
-            uri: asset?.uri,
-            hasBase64: !!asset?.base64,
-            type: asset?.type
-          });
-
-          return {
-            uri: asset?.uri,
-            base64: asset?.base64, // This must exist
-            type: asset?.type || 'image/jpeg',
-            name: asset?.fileName || `image_${Date.now()}`,
-          };
+      if (result) {
+        const file = Array.isArray(result) ? result[0] : result;
+        console.log('PDF selected:', file);
+        
+        // Read file as base64
+        const filePath = file.fileCopyUri || file.uri;
+        
+        // Clean URI if needed (remove file:// prefix)
+        const cleanPath = filePath.replace('file://', '');
+        const base64 = await RNFS.readFile(cleanPath, 'base64');
+        
+        setPdfFile({
+          name: file.name,
+          uri: file.uri,
+          base64: base64,
+          size: file.size,
         });
-        setImages([...images, ...newImages]);
+        
+        Alert.alert('Success', `PDF "${file.name}" loaded successfully`);
       }
     } catch (error) {
-      console.log('Error adding more images:', error);
-      Alert.alert('Error', 'Failed to add images');
+      if (DocumentPicker.isCancel(error)) {
+        console.log('User cancelled PDF picker');
+      } else {
+        console.error('Error picking PDF:', error);
+        Alert.alert('Error', 'Failed to select PDF: ' + error.message);
+      }
     }
   };
 
   const handleUpload = async () => {
-    if (images.length === 0) return;
+    if (!pdfFile || !pdfFile.base64) {
+      Alert.alert('Error', 'Please select a PDF file first');
+      return;
+    }
 
     setIsLoading(true);
     try {
-      // Only include images with base64 data
-      const uploadableImages = images.filter(img => img.base64);
-
-     const response = await axios.post(
-  "http://192.168.0.198:5000/upload",
-  {
-    images: uploadableImages.map(img => `data:${img.type};base64,${img.base64}`)
-  }
-);
-
+      console.log('Uploading model answer PDF...');
+      
+      const response = await axios.post(
+        "http://192.168.0.198:5000/upload-model",
+        {
+          pdf: `data:application/pdf;base64,${pdfFile.base64}`
+        }
+      );
 
       // Handle response
       console.log('Server response:', response.data);
 
       navigation.navigate('ResultsScreen', {
-        results: response.data.results
+        results: [response.data], // Wrap in array for compatibility
+        isModelAnswer: true,
+        totalQuestions: response.data.total_questions
       });
     } catch (error) {
       console.error('Upload failed:', error);
@@ -87,43 +84,53 @@ const GalleryScreen = ({ route, navigation }) => {
   };
 
   return (
-    <View style={{ flex: 1 }}>
-      <FlatList
-        data={images}
-        renderItem={({ item }) => (
-          <View style={{ width, height }}>
-            <Image
-              source={{ uri: item?.uri }}
-              style={styles.fullScreenImage}
-              resizeMode="contain"
-            />
+    <View style={styles.container}>
+      <View style={styles.contentContainer}>
+        <Text style={styles.title}>Upload Model Answer PDF</Text>
+        <Text style={styles.subtitle}>
+          Select a PDF containing question numbers and model answers
+        </Text>
+        
+        {pdfFile ? (
+          <View style={styles.pdfCard}>
+            <Text style={styles.pdfIcon}>📄</Text>
+            <View style={styles.pdfInfo}>
+              <Text style={styles.pdfName} numberOfLines={1}>
+                {pdfFile.name}
+              </Text>
+              <Text style={styles.pdfSize}>
+                {(pdfFile.size / 1024 / 1024).toFixed(2)} MB
+              </Text>
+            </View>
+            <TouchableOpacity
+              style={styles.removeButton}
+              onPress={() => setPdfFile(null)}
+            >
+              <Text style={styles.removeButtonText}>✕</Text>
+            </TouchableOpacity>
           </View>
+        ) : (
+          <TouchableOpacity
+            style={styles.selectButton}
+            onPress={handleSelectPDF}
+            disabled={isLoading}
+          >
+            <Text style={styles.selectButtonIcon}>📁</Text>
+            <Text style={styles.selectButtonText}>Select PDF</Text>
+          </TouchableOpacity>
         )}
-        keyExtractor={(item, index) => index.toString()}
-        pagingEnabled
-        showsVerticalScrollIndicator={false}
-        snapToInterval={height}
-        decelerationRate="fast"
-      />
+      </View>
       
       <View style={styles.buttonContainer}>
         <TouchableOpacity
-          style={styles.button}
-          onPress={handleAddMore}
-          disabled={isLoading}
-        >
-          <Text style={styles.buttonText}>Add More Files</Text>
-        </TouchableOpacity>
-        
-        <TouchableOpacity
-          style={[styles.button, styles.uploadButton]}
+          style={[styles.uploadButton, (!pdfFile || isLoading) && styles.disabledButton]}
           onPress={handleUpload}
-          disabled={isLoading || images.length === 0}
+          disabled={!pdfFile || isLoading}
         >
           {isLoading ? (
             <ActivityIndicator color="white" />
           ) : (
-            <Text style={styles.buttonText}>Upload</Text>
+            <Text style={styles.buttonText}>Upload & Process</Text>
           )}
         </TouchableOpacity>
       </View>
@@ -132,32 +139,98 @@ const GalleryScreen = ({ route, navigation }) => {
 };
 
 const styles = StyleSheet.create({
-  fullScreenImage: {
-    width: '100%',
-    height: '100%',
+  container: {
+    flex: 1,
+    backgroundColor: '#f5f5f5',
   },
-  buttonContainer: {
-    position: 'absolute',
-    bottom: 30,
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    width: '100%',
+  contentContainer: {
+    flex: 1,
+    padding: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  title: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: 10,
+    textAlign: 'center',
+  },
+  subtitle: {
+    fontSize: 14,
+    color: '#666',
+    textAlign: 'center',
+    marginBottom: 40,
     paddingHorizontal: 20,
   },
-  button: {
+  selectButton: {
     backgroundColor: '#6200ee',
-    paddingVertical: 12,
-    paddingHorizontal: 25,
-    borderRadius: 25,
-    elevation: 3,
-    minWidth: 120,
+    paddingVertical: 40,
+    paddingHorizontal: 60,
+    borderRadius: 15,
     alignItems: 'center',
+    elevation: 5,
+  },
+  selectButtonIcon: {
+    fontSize: 48,
+    marginBottom: 10,
+  },
+  selectButtonText: {
+    color: 'white',
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  pdfCard: {
+    flexDirection: 'row',
+    backgroundColor: 'white',
+    padding: 20,
+    borderRadius: 12,
+    alignItems: 'center',
+    width: '100%',
+    elevation: 3,
+  },
+  pdfIcon: {
+    fontSize: 40,
+    marginRight: 15,
+  },
+  pdfInfo: {
+    flex: 1,
+  },
+  pdfName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 4,
+  },
+  pdfSize: {
+    fontSize: 14,
+    color: '#666',
+  },
+  removeButton: {
+    padding: 10,
+  },
+  removeButtonText: {
+    fontSize: 20,
+    color: '#ff4444',
+    fontWeight: 'bold',
+  },
+  buttonContainer: {
+    padding: 20,
+    paddingBottom: 30,
   },
   uploadButton: {
     backgroundColor: '#03dac6',
+    paddingVertical: 16,
+    borderRadius: 12,
+    elevation: 3,
+    alignItems: 'center',
+  },
+  disabledButton: {
+    backgroundColor: '#ccc',
   },
   buttonText: {
     color: 'white',
+    fontSize: 16,
     fontWeight: 'bold',
   },
 });

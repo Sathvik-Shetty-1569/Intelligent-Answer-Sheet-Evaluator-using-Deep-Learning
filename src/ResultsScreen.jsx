@@ -6,26 +6,36 @@ import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 
 
 const ResultsScreen = ({ route,navigation }) => {
-  const { results } = route.params;
+  const { results, isModelAnswer = false } = route.params;
   const [marks, setMarks] = useState({});
   const [expandedItems, setExpandedItems] = useState({});
   const [modelName, setModelName] = useState(''); // State for model name input
+  console.log("RESULTS PROP:", results);
 
 
   
-  const handleMarkChange = (resultIndex, pairIndex, value) => {
+  const handleMarkChange = (questionKey, value) => {
     setMarks(prev => ({
       ...prev,
-      [`${resultIndex}-${pairIndex}`]: value
+      [questionKey]: value
     }));
   };
 
+// Add this at the top, after imports
+const cleanText = (text) => {
+  if (!text) return '';
+  return text
+    .replace(/\n/g, ' ')           // replace newlines with space
+    .replace(/\s+/g, ' ')          // collapse multiple spaces
+    .replace(/^[^a-zA-Z]+/, '')    // remove starting non-letters/punctuation
+    .trim();                        // remove leading/trailing spaces
+};
 
 
-  const toggleExpand = (resultIndex, pairIndex) => {
+  const toggleExpand = (key) => {
     setExpandedItems(prev => ({
       ...prev,
-      [`${resultIndex}-${pairIndex}`]: !prev[`${resultIndex}-${pairIndex}`]
+      [key]: !prev[key]
     }));
   };
 
@@ -37,29 +47,45 @@ const ResultsScreen = ({ route,navigation }) => {
       }
 
     const finalData = [];
-    results.forEach((result, resultIndex) => {
-      const qaPairs = result.qa_dict ? Object.entries(result.qa_dict) : [];
-      result.cropped_pairs.forEach((_, pairIndex) => {
-        const key = `${resultIndex}-${pairIndex}`;
-        const [question, answer] = qaPairs[pairIndex] || ['N/A', 'N/A'];
-
+    
+    if (isModelAnswer && results[0]?.qa_dict) {
+      // New format: Model answer PDF with cutouts
+      const qa_dict = results[0].qa_dict;
+      Object.entries(qa_dict).forEach(([questionKey, answer]) => {
         finalData.push({
-          question,
-          answer,
-          mark: marks[key] || '0',
+          question: questionKey,
+          answer: cleanText(answer), // <-- cleaned same as display
+          mark: parseInt(marks[questionKey] || '0'),
+        });
+        
+      });
+    } else {
+      // Old format: Image-based with cropped_pairs
+      results.forEach((result, resultIndex) => {
+        const qaPairs = result.qa_dict ? Object.entries(result.qa_dict) : [];
+        result.cropped_pairs.forEach((_, pairIndex) => {
+          const key = `${resultIndex}-${pairIndex}`;
+          const [question, answer] = qaPairs[pairIndex] || ['N/A', 'N/A'];
+
+          finalData.push({
+            question,
+            answer,
+            mark: parseInt(marks[key] || '0'),
+          });
         });
       });
-    });
+    }
 
     console.log('Final Structured Data:', finalData);
     
     await addDoc(collection(db, 'models'), {
-      name: modelName.trim(), // Use the user-provided name
+      modelName: modelName.trim(),
       data: finalData,
       createdAt: serverTimestamp(),
+      totalQuestions: finalData.length
     });
     console.log(`✅ Saved to Firestore as ${modelName}`);    
-      navigation.navigate('ImagePicker'); // Go to saved screen
+      navigation.navigate('ImagePicker');
 
   } catch (e) {
     console.error('Saving error:', e);
@@ -72,72 +98,105 @@ const ResultsScreen = ({ route,navigation }) => {
   return (
     <View style={styles.mainContainer}>
 
-    <ScrollView contentContainerStyle={styles.container}>
-      <Text style={styles.heading}>Set Evaluation Marks</Text>
+<ScrollView contentContainerStyle={styles.container}>
+  <Text style={styles.heading}>Set Evaluation Marks</Text>
 
-      <View style={styles.modelNameContainer}>
-          <Text style={styles.modelNameLabel}>Model Name:</Text>
-          <TextInput
-            style={styles.modelNameInput}
-            placeholder="Enter model name"
-            placeholderTextColor="#999"
-            value={modelName}
-            onChangeText={setModelName}
-            maxLength={50}
-          />
-        </View>
+  <View style={styles.modelNameContainer}>
+    <Text style={styles.modelNameLabel}>Model Name:</Text>
+    <TextInput
+      style={styles.modelNameInput}
+      placeholder="Enter model name"
+      placeholderTextColor="#999"
+      value={modelName}
+      onChangeText={setModelName}
+      maxLength={50}
+    />
+  </View>
 
-      {results.map((result, resultIndex) => (
+  {isModelAnswer && results[0]?.qa_dict ? (
+    // New format: display qa_dict text
+    Object.entries(results[0].qa_dict).map(([questionKey, answer], index) => (
+      <View key={questionKey} style={styles.card}>
+        <TouchableOpacity
+          style={styles.cardHeader}
+          onPress={() => toggleExpand(questionKey)}
+        >
+          <Text style={styles.cardTitle}>{questionKey}</Text>
+          <View style={styles.headerRight}>
+            <View style={styles.marksInputContainer}>
+              <Text style={styles.marksLabel}>Max Marks:</Text>
+              <TextInput
+                style={styles.marksInput}
+                keyboardType="numeric"
+                placeholder="0"
+                placeholderTextColor="#999"
+                value={marks[questionKey] || ''}
+                onChangeText={(text) => handleMarkChange(questionKey, text)}
+              />
+            </View>
+            <Text style={styles.expandIcon}>
+              {expandedItems[questionKey] ? '▲' : '▼'}
+            </Text>
+          </View>
+        </TouchableOpacity>
 
-        <View key={resultIndex} style={styles.resultBlock}>
-          
-         
-          {result.cropped_pairs.map((base64Image, pairIndex) => (
-            <View key={pairIndex} style={styles.card}>
+        {expandedItems[questionKey] && (
+  <View style={styles.cardContent}>
+  <Text style={{ color: '#333', lineHeight: 20 }}>
+  {cleanText(answer)}
+</Text>
 
+  </View>
+)}
+      </View>
+    ))
+  ) : (
+    // Old format: Image-based with cropped_pairs
+    results.map((result, resultIndex) => (
+      <View key={resultIndex} style={styles.resultBlock}>
+        {result.cropped_pairs.map((base64Image, pairIndex) => (
+          <View key={pairIndex} style={styles.card}>
+            <TouchableOpacity
+              style={styles.cardHeader}
+              onPress={() => toggleExpand(`${resultIndex}-${pairIndex}`)}
+            >
+              <Text style={styles.cardTitle}>
+                Question {resultIndex + 1}-{pairIndex + 1}
+              </Text>
+              <Text style={styles.expandIcon}>
+                {expandedItems[`${resultIndex}-${pairIndex}`] ? '▲' : '▼'}
+              </Text>
+            </TouchableOpacity>
 
-              <TouchableOpacity
-                style={styles.cardHeader}
-                onPress={() => toggleExpand(resultIndex, pairIndex)}
-              >
-                <Text style={styles.cardTitle}>
-                  Question {resultIndex + 1}-{pairIndex + 1}
-                </Text>
-                <Text style={styles.expandIcon}>
-                  {expandedItems[`${resultIndex}-${pairIndex}`] ? '▲' : '▼'}
-                </Text>
-              </TouchableOpacity>
-
-              {expandedItems[`${resultIndex}-${pairIndex}`] && (
-                <View style={styles.cardContent}>
-
-
-                  <View style={styles.inputGroup}>
-                    <Text style={styles.inputLabel}>Marks:</Text>
-                    <TextInput
-                      style={styles.input}
-                      keyboardType="numeric"
-                      placeholder="0"
-                      placeholderTextColor="#999"
-                      value={marks[`${resultIndex}-${pairIndex}`] || ''}
-                      onChangeText={(text) =>
-                        handleMarkChange(resultIndex, pairIndex, text)
-                      }
-                    />
-                  </View>
-
-                  <Image
-                    source={{ uri: base64Image }}
-                    style={styles.image}
-                    resizeMode="contain"
+            {expandedItems[`${resultIndex}-${pairIndex}`] && (
+              <View style={styles.cardContent}>
+                <View style={styles.inputGroup}>
+                  <Text style={styles.inputLabel}>Marks:</Text>
+                  <TextInput
+                    style={styles.input}
+                    keyboardType="numeric"
+                    placeholder="0"
+                    placeholderTextColor="#999"
+                    value={marks[`${resultIndex}-${pairIndex}`] || ''}
+                    onChangeText={(text) =>
+                      handleMarkChange(`${resultIndex}-${pairIndex}`, text)
+                    }
                   />
                 </View>
-              )}
-            </View>
-          ))}
-        </View>
-      ))}
-    </ScrollView>
+
+                <Image
+                  source={{ uri: base64Image }}
+                  style={styles.image}
+                  resizeMode="contain"
+                />
+              </View>
+            )}
+          </View>
+        ))}
+      </View>
+    ))
+  )}
+</ScrollView>
     <View style={styles.buttonContainer}>
         <TouchableOpacity 
           style={styles.saveButton}
@@ -186,6 +245,37 @@ const styles = StyleSheet.create({
     padding: 15,
     borderBottomWidth: 1,
     borderBottomColor: '#eee',
+  },
+  headerRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  marksInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f0f0f0',
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+    borderRadius: 8,
+  },
+  marksLabel: {
+    fontSize: 13,
+    color: '#666',
+    marginRight: 8,
+  },
+  marksInput: {
+    width: 50,
+    height: 38,
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    fontSize: 14,
+    color: '#333',
+    backgroundColor: '#fff',
+    textAlign: 'center',
+    
   },
   cardTitle: {
     fontSize: 16,
