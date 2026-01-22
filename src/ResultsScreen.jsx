@@ -1,27 +1,8 @@
 import React, { useState } from 'react';
-import { View, ScrollView, Image, Text, StyleSheet, TextInput, TouchableOpacity } from 'react-native';
+import { View, ScrollView, Text, StyleSheet, TextInput, TouchableOpacity } from 'react-native';
 import { db } from '../firebaseConfig'; // adjust path
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 
-
-
-const ResultsScreen = ({ route,navigation }) => {
-  const { results, isModelAnswer = false } = route.params;
-  const [marks, setMarks] = useState({});
-  const [expandedItems, setExpandedItems] = useState({});
-  const [modelName, setModelName] = useState(''); // State for model name input
-  console.log("RESULTS PROP:", results);
-
-
-  
-  const handleMarkChange = (questionKey, value) => {
-    setMarks(prev => ({
-      ...prev,
-      [questionKey]: value
-    }));
-  };
-
-// Add this at the top, after imports
 const cleanText = (text) => {
   if (!text) return '';
   return text
@@ -31,6 +12,18 @@ const cleanText = (text) => {
     .trim();                        // remove leading/trailing spaces
 };
 
+const ResultsScreen = ({ route, navigation }) => {
+  const { results, isModelAnswer = false } = route.params;
+  const [marks, setMarks] = useState({});
+  const [expandedItems, setExpandedItems] = useState({});
+  const [modelName, setModelName] = useState(''); // State for model name input
+
+  const handleMarkChange = (questionKey, value) => {
+    setMarks(prev => ({
+      ...prev,
+      [questionKey]: value
+    }));
+  };
 
   const toggleExpand = (key) => {
     setExpandedItems(prev => ({
@@ -39,173 +32,109 @@ const cleanText = (text) => {
     }));
   };
 
-  const handleSave = async() => {
+  const handleSave = async () => {
     try {
       if (!modelName.trim()) {
         alert('Please enter a model name');
         return;
       }
 
-    const finalData = [];
-    
-    if (isModelAnswer && results[0]?.qa_dict) {
-      // New format: Model answer PDF with cutouts
-      const qa_dict = results[0].qa_dict;
-      Object.entries(qa_dict).forEach(([questionKey, answer]) => {
-        finalData.push({
-          question: questionKey,
-          answer: cleanText(answer), // <-- cleaned same as display
-          mark: parseInt(marks[questionKey] || '0'),
-        });
-        
-      });
-    } else {
-      // Old format: Image-based with cropped_pairs
-      results.forEach((result, resultIndex) => {
-        const qaPairs = result.qa_dict ? Object.entries(result.qa_dict) : [];
-        result.cropped_pairs.forEach((_, pairIndex) => {
-          const key = `${resultIndex}-${pairIndex}`;
-          const [question, answer] = qaPairs[pairIndex] || ['N/A', 'N/A'];
+      const finalData = [];
 
+      if (isModelAnswer && results[0]?.qa_dict) {
+        const qa_dict = results[0].qa_dict;
+        Object.entries(qa_dict).forEach(([questionKey, answer]) => {
           finalData.push({
-            question,
-            answer,
-            mark: parseInt(marks[key] || '0'),
+            question: questionKey,
+            answer: cleanText(answer), // cleaned before saving
+            mark: parseInt(marks[questionKey] || '0'),
           });
         });
-      });
-    }
+      }
 
-    console.log('Final Structured Data:', finalData);
-    
-    await addDoc(collection(db, 'models'), {
-      modelName: modelName.trim(),
-      data: finalData,
-      createdAt: serverTimestamp(),
-      totalQuestions: finalData.length
-    });
-    console.log(`✅ Saved to Firestore as ${modelName}`);    
+      console.log('Final Structured Data:', finalData);
+
+      await addDoc(collection(db, 'models'), {
+        modelName: modelName.trim(),
+        data: finalData,
+        createdAt: serverTimestamp(),
+        totalQuestions: finalData.length
+      });
+
+      console.log(`✅ Saved to Firestore as ${modelName}`);
       navigation.navigate('ImagePicker');
 
-  } catch (e) {
-    console.error('Saving error:', e);
-    alert('Failed to save model. Please try again.');
-
-  }
-
+    } catch (e) {
+      console.error('Saving error:', e);
+      alert('Failed to save model. Please try again.');
+    }
   };
 
   return (
     <View style={styles.mainContainer}>
+      <ScrollView contentContainerStyle={styles.container}>
+        <Text style={styles.heading}>Set Evaluation Marks</Text>
 
-<ScrollView contentContainerStyle={styles.container}>
-  <Text style={styles.heading}>Set Evaluation Marks</Text>
+        <View style={styles.modelNameContainer}>
+          <Text style={styles.modelNameLabel}>Model Name:</Text>
+          <TextInput
+            style={styles.modelNameInput}
+            placeholder="Enter model name"
+            placeholderTextColor="#999"
+            value={modelName}
+            onChangeText={setModelName}
+            maxLength={50}
+          />
+        </View>
 
-  <View style={styles.modelNameContainer}>
-    <Text style={styles.modelNameLabel}>Model Name:</Text>
-    <TextInput
-      style={styles.modelNameInput}
-      placeholder="Enter model name"
-      placeholderTextColor="#999"
-      value={modelName}
-      onChangeText={setModelName}
-      maxLength={50}
-    />
-  </View>
-
-  {isModelAnswer && results[0]?.qa_dict ? (
-    // New format: display qa_dict text
-    Object.entries(results[0].qa_dict).map(([questionKey, answer], index) => (
-      <View key={questionKey} style={styles.card}>
-        <TouchableOpacity
-          style={styles.cardHeader}
-          onPress={() => toggleExpand(questionKey)}
-        >
-          <Text style={styles.cardTitle}>{questionKey}</Text>
-          <View style={styles.headerRight}>
-            <View style={styles.marksInputContainer}>
-              <Text style={styles.marksLabel}>Max Marks:</Text>
-              <TextInput
-                style={styles.marksInput}
-                keyboardType="numeric"
-                placeholder="0"
-                placeholderTextColor="#999"
-                value={marks[questionKey] || ''}
-                onChangeText={(text) => handleMarkChange(questionKey, text)}
-              />
-            </View>
-            <Text style={styles.expandIcon}>
-              {expandedItems[questionKey] ? '▲' : '▼'}
-            </Text>
-          </View>
-        </TouchableOpacity>
-
-        {expandedItems[questionKey] && (
-  <View style={styles.cardContent}>
-  <Text style={{ color: '#333', lineHeight: 20 }}>
-  {cleanText(answer)}
-</Text>
-
-  </View>
-)}
-      </View>
-    ))
-  ) : (
-    // Old format: Image-based with cropped_pairs
-    results.map((result, resultIndex) => (
-      <View key={resultIndex} style={styles.resultBlock}>
-        {result.cropped_pairs.map((base64Image, pairIndex) => (
-          <View key={pairIndex} style={styles.card}>
-            <TouchableOpacity
-              style={styles.cardHeader}
-              onPress={() => toggleExpand(`${resultIndex}-${pairIndex}`)}
-            >
-              <Text style={styles.cardTitle}>
-                Question {resultIndex + 1}-{pairIndex + 1}
-              </Text>
-              <Text style={styles.expandIcon}>
-                {expandedItems[`${resultIndex}-${pairIndex}`] ? '▲' : '▼'}
-              </Text>
-            </TouchableOpacity>
-
-            {expandedItems[`${resultIndex}-${pairIndex}`] && (
-              <View style={styles.cardContent}>
-                <View style={styles.inputGroup}>
-                  <Text style={styles.inputLabel}>Marks:</Text>
-                  <TextInput
-                    style={styles.input}
-                    keyboardType="numeric"
-                    placeholder="0"
-                    placeholderTextColor="#999"
-                    value={marks[`${resultIndex}-${pairIndex}`] || ''}
-                    onChangeText={(text) =>
-                      handleMarkChange(`${resultIndex}-${pairIndex}`, text)
-                    }
-                  />
+        {isModelAnswer && results[0]?.qa_dict && (
+          Object.entries(results[0].qa_dict).map(([questionKey, answer]) => (
+            <View key={questionKey} style={styles.card}>
+              <TouchableOpacity
+                style={styles.cardHeader}
+                onPress={() => toggleExpand(questionKey)}
+              >
+                <Text style={styles.cardTitle}>{questionKey}</Text>
+                <View style={styles.headerRight}>
+                  <View style={styles.marksInputContainer}>
+                    <Text style={styles.marksLabel}>Max Marks:</Text>
+                    <TextInput
+                      style={styles.marksInput}
+                      keyboardType="numeric"
+                      placeholder="0"
+                      placeholderTextColor="#999"
+                      value={marks[questionKey] || ''}
+                      onChangeText={(text) => handleMarkChange(questionKey, text)}
+                    />
+                  </View>
+                  <Text style={styles.expandIcon}>
+                    {expandedItems[questionKey] ? '▲' : '▼'}
+                  </Text>
                 </View>
+              </TouchableOpacity>
 
-                <Image
-                  source={{ uri: base64Image }}
-                  style={styles.image}
-                  resizeMode="contain"
-                />
-              </View>
-            )}
-          </View>
-        ))}
-      </View>
-    ))
-  )}
-</ScrollView>
-    <View style={styles.buttonContainer}>
+              {expandedItems[questionKey] && (
+                <View style={styles.cardContent}>
+                  <Text style={{ color: '#333', lineHeight: 20 }}>
+                    {cleanText(answer)}
+                  </Text>
+                </View>
+              )}
+            </View>
+          ))
+        )}
+
+      </ScrollView>
+
+      <View style={styles.buttonContainer}>
         <TouchableOpacity 
           style={styles.saveButton}
           onPress={handleSave}
         >
           <Text style={styles.saveButtonText}>Create Model</Text>
         </TouchableOpacity>
-        </View>
-        </View>
+      </View>
+    </View>
   );
 };
 
@@ -224,9 +153,6 @@ const styles = StyleSheet.create({
     marginBottom: 20,
     color: '#333',
     textAlign: 'center',
-  },
-  resultBlock: {
-    marginBottom: 15,
   },
   card: {
     backgroundColor: '#fff',
@@ -275,7 +201,6 @@ const styles = StyleSheet.create({
     color: '#333',
     backgroundColor: '#fff',
     textAlign: 'center',
-    
   },
   cardTitle: {
     fontSize: 16,
@@ -289,48 +214,12 @@ const styles = StyleSheet.create({
   cardContent: {
     padding: 15,
   },
-  
-  inputGroup: {
-    flexDirection: 'row',
+  buttonContainer: {
+    bottom: 20,
+    left: 0,
+    right: 0,
     alignItems: 'center',
-    marginBottom: 15,
-  },
-  inputLabel: {
-    fontSize: 15,
-    color: '#555',
-    width: 80,
-    marginRight: 10,
-  },
-  dropdownContainer: {
-    flex: 1,
-    borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 8,
-    overflow: 'hidden',
-  },
-  dropdown: {
-    height: 45,
-    color: '#333',
-    backgroundColor: '#f9f9f9',
-  },
-  input: {
-    flex: 1,
-    height: 45,
-    borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    fontSize: 15,
-    color: '#333',
-    backgroundColor: '#f9f9f9',
-  },
-  image: {
-    width: '100%',
-    height: 200,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#eee',
-    marginTop: 10,
+    position: 'absolute',
   },
   saveButton: {
     backgroundColor: '#007BFF',
@@ -346,14 +235,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
   },
-  buttonContainer: {
-    bottom: 20,
-    left: 0,
-    right: 0,
-    alignItems: 'center',
-    position: 'absolute',
-  },
-
   modelNameContainer: {
     backgroundColor: '#fff',
     borderRadius: 12,
@@ -381,7 +262,6 @@ const styles = StyleSheet.create({
     color: '#333',
     backgroundColor: '#f9f9f9',
   }
-
 });
 
 export default ResultsScreen;
