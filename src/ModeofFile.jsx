@@ -37,7 +37,6 @@ const ModeofFile = ({ navigation }) => {
           size: file.size,
         });
         
-        Alert.alert('Success', `PDF "${file.name}" loaded successfully`);
       }
     } catch (error) {
       if (DocumentPicker.isCancel(error)) {

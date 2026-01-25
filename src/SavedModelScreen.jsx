@@ -43,7 +43,7 @@ const SavedModelScreen = ({navigation }) => {
         navigation.navigate('Answerpicker', { modelId: item.id })
         }}
     >
-      <Text style={styles.title}>{item.name}</Text>
+      <Text style={styles.title}>{item.modelName}</Text>
       <Text style={styles.subtitle}>Saved: {item.createdAt.toLocaleString()}</Text>
       <Text style={styles.subtitle}>Total Pairs: {item.data.length}</Text>
     </TouchableOpacity>
