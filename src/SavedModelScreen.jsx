@@ -38,7 +38,10 @@ const SavedModelScreen = ({navigation }) => {
   const renderItem = ({ item }) => (
     <TouchableOpacity
       style={styles.card}
-      onPress={() => navigation.navigate('Answerpicker', { modelId: item.id })}
+      onPress={() => 
+        {console.log('Pressed model:', item.id);
+        navigation.navigate('Answerpicker', { modelId: item.id })
+        }}
     >
       <Text style={styles.title}>{item.name}</Text>
       <Text style={styles.subtitle}>Saved: {item.createdAt.toLocaleString()}</Text>
