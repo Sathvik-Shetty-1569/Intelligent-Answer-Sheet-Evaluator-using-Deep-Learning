@@ -211,7 +211,6 @@ const SubmitAnswerScreen = ({ route, navigation }) => {
                         styles.studentName, 
                         index === selectedStudentIndex && styles.activeStudentName
                       ]}
-                      numberOfLines={1}
                     >
                       {student.student_name}
                     </Text>
@@ -430,7 +429,6 @@ const styles = StyleSheet.create({
     color: '#2d3436',
     marginBottom: 4,
     textAlign: 'center',
-    maxWidth: 100,
   },
   activeStudentName: {
     color: '#fff',

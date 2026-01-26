@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { View, ScrollView, Text, StyleSheet, TextInput, TouchableOpacity } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, ScrollView, Text, StyleSheet, TextInput, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { db } from '../firebaseConfig'; // adjust path
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 
@@ -13,10 +13,23 @@ const cleanText = (text) => {
 };
 
 const ResultsScreen = ({ route, navigation }) => {
-  const { results, isModelAnswer = false } = route.params;
+  const { results, isModelAnswer = false } = route.params || {};
   const [marks, setMarks] = useState({});
   const [expandedItems, setExpandedItems] = useState({});
   const [modelName, setModelName] = useState(''); // State for model name input
+  const [isSaving, setIsSaving] = useState(false); // Loading state for save operation
+
+  // Debug: Log route params on mount
+  useEffect(() => {
+    console.log('=== ResultsScreen Mounted ===');
+    console.log('Route params:', route.params);
+    console.log('results:', results);
+    console.log('isModelAnswer:', isModelAnswer);
+    if (results?.[0]) {
+      console.log('results[0] keys:', Object.keys(results[0]));
+      console.log('results[0].qa_dict exists:', !!results[0].qa_dict);
+    }
+  }, []);
 
   const handleMarkChange = (questionKey, value) => {
     setMarks(prev => ({
@@ -33,40 +46,143 @@ const ResultsScreen = ({ route, navigation }) => {
   };
 
   const handleSave = async () => {
+    if (isSaving) {
+      console.log('Save already in progress, ignoring duplicate call');
+      return;
+    }
+
     try {
+      setIsSaving(true);
+      console.log('=== Save button pressed ===');
+
       if (!modelName.trim()) {
         alert('Please enter a model name');
+        setIsSaving(false);
+        return;
+      }
+
+      // Debug logging
+      console.log('=== Save Model Debug ===');
+      console.log('isModelAnswer:', isModelAnswer);
+      console.log('results:', results);
+      console.log('results[0]:', results?.[0]);
+      console.log('results[0]?.qa_dict:', results?.[0]?.qa_dict);
+
+      // Validate results data
+      if (!results || !Array.isArray(results) || results.length === 0) {
+        console.error('❌ Results data is missing or invalid');
+        alert('Error: No results data found. Please try uploading again.');
+        setIsSaving(false);
+        return;
+      }
+
+      if (!isModelAnswer) {
+        console.error('❌ isModelAnswer is false');
+        alert('Error: This screen is not configured for model answers.');
+        setIsSaving(false);
+        return;
+      }
+
+      if (!results[0]?.qa_dict) {
+        console.error('❌ qa_dict is missing from results');
+        console.error('Available keys in results[0]:', Object.keys(results[0] || {}));
+        alert('Error: Question-answer data not found. Please try uploading again.');
+        setIsSaving(false);
         return;
       }
 
       const finalData = [];
+      const qa_dict = results[0].qa_dict;
 
-      if (isModelAnswer && results[0]?.qa_dict) {
-        const qa_dict = results[0].qa_dict;
-        Object.entries(qa_dict).forEach(([questionKey, answer]) => {
-          finalData.push({
-            question: questionKey,
-            answer: cleanText(answer), // cleaned before saving
-            mark: parseInt(marks[questionKey] || '0'),
-          });
+      // Build final data array
+      Object.entries(qa_dict).forEach(([questionKey, answer]) => {
+        const markValue = marks[questionKey] || '0';
+        finalData.push({
+          question: questionKey,
+          answer: cleanText(answer), // cleaned before saving
+          mark: parseInt(markValue) || 0,
         });
+      });
+
+      // Validate finalData is not empty
+      if (finalData.length === 0) {
+        console.error('❌ finalData is empty after processing');
+        alert('Error: No questions found to save. Please check the uploaded data.');
+        setIsSaving(false);
+        return;
       }
 
       console.log('Final Structured Data:', finalData);
+      console.log('Total questions:', finalData.length);
+      console.log('Model name:', modelName.trim());
 
-      await addDoc(collection(db, 'models'), {
+      // Verify Firebase connection
+      console.log('Checking Firebase connection...');
+      console.log('db object:', db);
+      if (!db) {
+        throw new Error('Firebase database not initialized');
+      }
+
+      // Prepare data for Firebase
+      const firebaseData = {
         modelName: modelName.trim(),
         data: finalData,
         createdAt: serverTimestamp(),
         totalQuestions: finalData.length
+      };
+      console.log('Data to save (summary):', {
+        modelName: firebaseData.modelName,
+        totalQuestions: firebaseData.totalQuestions,
+        dataLength: firebaseData.data.length,
+        firstQuestion: firebaseData.data[0]?.question
       });
 
-      console.log(`✅ Saved to Firestore as ${modelName}`);
-      navigation.navigate('ImagePicker');
+      // Save to Firebase
+      console.log('Attempting to save to Firestore...');
+      console.log('Collection path: models');
+      
+      try {
+        const docRef = await addDoc(collection(db, 'models'), firebaseData);
+        console.log(`✅ Saved to Firestore as ${modelName}`);
+        console.log('Document ID:', docRef.id);
+        console.log('Document path:', docRef.path);
+
+        // Navigate after successful save
+        console.log('Navigating to ImagePicker...');
+        setIsSaving(false);
+        alert(`Model "${modelName}" saved successfully!`);
+        navigation.navigate('ImagePicker');
+        console.log('Navigation called');
+      } catch (firebaseError) {
+        console.error('❌ Firebase specific error:', firebaseError);
+        console.error('Firebase error code:', firebaseError.code);
+        console.error('Firebase error message:', firebaseError.message);
+        console.error('Firebase error stack:', firebaseError.stack);
+        setIsSaving(false);
+        throw firebaseError; // Re-throw to be caught by outer catch
+      }
 
     } catch (e) {
-      console.error('Saving error:', e);
-      alert('Failed to save model. Please try again.');
+      setIsSaving(false);
+      console.error('❌ Saving error:', e);
+      console.error('Error details:', {
+        message: e.message,
+        code: e.code,
+        stack: e.stack
+      });
+      
+      // More detailed error message
+      let errorMessage = 'Failed to save model. ';
+      if (e.code) {
+        errorMessage += `Error code: ${e.code}. `;
+      }
+      if (e.message) {
+        errorMessage += e.message;
+      } else {
+        errorMessage += 'Unknown error occurred.';
+      }
+      
+      alert(errorMessage + ' Please check your internet connection and try again.');
     }
   };
 
@@ -128,10 +244,13 @@ const ResultsScreen = ({ route, navigation }) => {
 
       <View style={styles.buttonContainer}>
         <TouchableOpacity 
-          style={styles.saveButton}
+          style={[styles.saveButton, isSaving && styles.saveButtonDisabled]}
           onPress={handleSave}
+          disabled={isSaving}
         >
-          <Text style={styles.saveButtonText}>Create Model</Text>
+          <Text style={styles.saveButtonText}>
+            {isSaving ? 'Saving...' : 'Save Model'}
+          </Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -229,6 +348,10 @@ const styles = StyleSheet.create({
     elevation: 3,
     minWidth: 120,
     alignItems: 'center'
+  },
+  saveButtonDisabled: {
+    backgroundColor: '#6c757d',
+    opacity: 0.6
   },
   saveButtonText: {
     color: '#fff',

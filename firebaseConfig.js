@@ -2,12 +2,13 @@ import { initializeApp } from 'firebase/app';
 import { getFirestore } from 'firebase/firestore';
 
 const firebaseConfig = {
-  apiKey: "AIzaSyC992uaVZTeUaCFiyiwm_M3QE2Vkkj1Fr0",
-  authDomain: "aianswerevaluator.firebaseapp.com",
-  projectId: "aianswerevaluator",
-  storageBucket: "aianswerevaluator.firebasestorage.com",
-  messagingSenderId: "YOUR_MSG_ID",
-  appId: "1:1065584546582:android:c1a0cb00d70df89107f637"
+  apiKey: "AIzaSyBwW8As4m_Gwhacveqs28VkOb7OsjvSUpk",
+  authDomain: "intelligent-answer-sheet-74b3b.firebaseapp.com",
+  projectId: "intelligent-answer-sheet-74b3b",
+  storageBucket: "intelligent-answer-sheet-74b3b.firebasestorage.app",
+  messagingSenderId: "270179320480",
+  appId: "1:270179320480:web:6ed40c798142895d8bbfc5",
+  measurementId: "G-7QG0R2B974"
 };
 
 const app = initializeApp(firebaseConfig);
