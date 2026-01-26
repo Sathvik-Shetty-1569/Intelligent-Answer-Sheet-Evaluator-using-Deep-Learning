@@ -75,16 +75,19 @@ const Answerpicker = ({navigation, route}) => {
     setIsLoading(true);
   
     try {
-      await axios.post(
+      const response = await axios.post(
         'http://192.168.0.198:5000/upload',
         {
           pdfs: pdfFiles.map(f => `data:application/pdf;base64,${f.base64}`)
         }
       );
       
+      const students = response.data.students;
+      console.log('Students:', students);
   
       navigation.navigate('SubmitAnswerScreen', {
         modelId,
+        students ,
         isStudentAnswer: true
       });
     } catch (e) {

@@ -1,52 +1,45 @@
 import React, { useEffect, useState } from 'react';
-import { View, ScrollView, Text, StyleSheet, TouchableOpacity, TextInput, ActivityIndicator, Alert } from 'react-native';
+import { View, ScrollView, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import { db } from '../firebaseConfig';
 import { getDoc, doc } from 'firebase/firestore';
 import colabServerService from './services/colabServerService';
 
-
 const SubmitAnswerScreen = ({ route, navigation }) => {
-  const { modelId } = route.params;
-  const { results } = route.params;
-  const [studentName, setStudentName] = useState('');
+  const { modelId, students = [] } = route.params || {};
   const [expandedItems, setExpandedItems] = useState({});
   const [loading, setLoading] = useState(false);
   const [modelData, setModelData] = useState(null);
-
-  
+  const [selectedStudentIndex, setSelectedStudentIndex] = useState(0);
+  const selectedStudent = students.length > 0 ? students[selectedStudentIndex] : null;
 
   useEffect(() => {
-    console.log('Fetching model data for modelId:', modelId); // First log
     const fetchData = async () => {
-      try{
-      console.log('Creating document reference...');
-      const ModelRef = doc(db, 'models', modelId);
-      console.log('Fetching document snapshot...');
+      try {
+        const ModelRef = doc(db, 'models', modelId);
+        const ModelSnap = await getDoc(ModelRef);
 
-      const ModelSnap = await getDoc(ModelRef);
-      console.log('Snapshot received:', ModelSnap);
-
-  
-      if (ModelSnap.exists()) {
-        const data = ModelSnap.data()
-        console.log('Type of modelData:', Array.isArray(data) ? 'Array' : typeof data);
-        console.log('Document data:', JSON.stringify(data, null, 2));
-        console.log('Full ModelSnap:', ModelSnap);
-        console.log('ModelSnap data:', data);
-        console.log("AnswerSnap data:", results);
-        setModelData(ModelSnap.data());
-      } else {
-        console.warn('No document found for modelId:', modelId);
+        if (ModelSnap.exists()) {
+          setModelData(ModelSnap.data());
+        } else {
+          console.warn('No document found for modelId:', modelId);
+        }
+      } catch (error) {
+        console.error('Error fetching model data:', error);
       }
-    } catch (error) {
-      console.error('Error fetching model data:', error);
-    }
     };
-  
+
     fetchData();
   }, [modelId]);
   
+  const cleanAnswerText = (text) => {
+    if (!text) return '';
+    return text
+      .replace(/\r?\n|\r/g, ' ')     // Remove new lines
+      .replace(/\s+/g, ' ')          // Replace multiple spaces with single space
+      .replace(/^[^\w]+/, '')        // Remove starting punctuation/non-word chars
+      .trim();
+  };
 
   const toggleExpand = (key) => {
     setExpandedItems(prev => ({
@@ -55,7 +48,7 @@ const SubmitAnswerScreen = ({ route, navigation }) => {
     }));
   };
 
-  const compareAnswersWithAI = async (studentAnswer, modelAnswer ,maxMark) => {
+  const compareAnswersWithAI = async (studentAnswer, modelAnswer, maxMark) => {
     try {
       // Use your custom Colab-hosted fine-tuned model
       return await colabServerService.compareAnswers(studentAnswer, modelAnswer, maxMark);
@@ -68,383 +61,522 @@ const SubmitAnswerScreen = ({ route, navigation }) => {
     }
   };
 
-  const compareQuestionsWithAI = async (studentQuestion, modelQuestion) => {
-    try {
-      // Use your custom Colab-hosted fine-tuned model
-      return await colabServerService.compareQuestions(studentQuestion, modelQuestion);
-    } catch (error) {
-      console.error('Error comparing questions with Colab server:', error);
-      // Fallback to basic string comparison if server fails
-      return studentQuestion.trim().toLowerCase() === modelQuestion.trim().toLowerCase();
-    }
-  };
-
-
   // Submit answers to Firestore
   const submitAnswers = async () => {
-    if (!studentName.trim()) {
-      Alert.alert('Error', 'Please enter student name');
+    if (!Array.isArray(modelData?.data)) {
+      Alert.alert('Error', 'Invalid model data structure');
+      return;
+    }
+    if (!selectedStudent) {
+      Alert.alert('Error', 'No student selected');
       return;
     }
     if (!modelData) {
       Alert.alert('Error', 'Model data not loaded yet');
       return;
     }
-    if (!results || !results[0]?.qa_dict) {
-      Alert.alert('Error', 'Student answers are missing or invalid');
+    if (!students.length) {
+      Alert.alert('Error', 'No student data found');
       return;
     }
+    
     setLoading(true);
     try {
       // Create an array to store evaluation results
       const evaluationResults = [];
+      const qaDict = selectedStudent.qa_dict;
 
-            for (const result of results) {
-              if (!result?.qa_dict) {
-                console.warn('Result missing qa_dict:', result);
-                continue;
-              }
-      
-              const qaDict = result.qa_dict;
-        // Compare each question in the student's answers with the model data
-        for (const [studentQuestionKey, studentAnswer] of Object.entries(qaDict)) {
-          try {
-            // First try exact match
-            let matchedQuestion = modelData.data.find(
-              item => item.question.trim() === studentQuestionKey.trim()
-            );
-            
-            // If no exact match, try normalized matching (remove extra spaces, punctuation)
-            if (!matchedQuestion) {
-              const normalizeQuestion = (q) => {
-                return q.trim()
-                  .toLowerCase()
-                  .replace(/[\s\.,]+/g, ' ') // Replace multiple spaces/dots/commas with single space
-                  .replace(/^q\.?\s*\d+\.?\s*/i, '') // Remove question numbers like "Q.8." or "Q 8" etc.
-                  .trim();
-              };
-              
-              const normalizedStudent = normalizeQuestion(studentQuestionKey);
-              console.log(`🔍 Normalized student question: "${normalizedStudent}"`);
-              
-              matchedQuestion = modelData.data.find(item => {
-                const normalizedModel = normalizeQuestion(item.question);
-                console.log(`🔍 Comparing with normalized model: "${normalizedModel}"`);
-                return normalizedModel === normalizedStudent;
-              });
-              
-              if (matchedQuestion) {
-                console.log(`✅ Found match through normalization: "${studentQuestionKey}" → "${matchedQuestion.question}"`);
-              }
-            }
-  
-          if (!matchedQuestion) {
-            console.log(`No exact match for "${studentQuestionKey}", trying AI comparison`);
-            for (const modelQuestion of modelData.data) {
-              const isSame = await compareQuestionsWithAI(
-                studentQuestionKey,
-                modelQuestion.question
-              );
-              if (isSame) {
-                matchedQuestion = modelQuestion;
-                console.log(`AI matched "${studentQuestionKey}" with "${modelQuestion.question}"`);
-                break;
-              }
-            }
-          }
+      // Compare each question in the student's answers with the model data
+      for (const [studentQuestionKey, studentAnswer] of Object.entries(qaDict)) {
+        try {
+          // Find the matching question...
+          let matchedQuestion = modelData.data.find((q) => q.question.trim().toLowerCase() === studentQuestionKey.trim().toLowerCase());
 
-          if (!matchedQuestion) {
-            console.warn(`Question "${studentQuestionKey}" not found in model data`);
-            continue; // Skip to next question if no match found
-          }
+          if (!matchedQuestion) continue;
 
-          // Check if answers are identical first to avoid unnecessary AI calls
-          const studentAnswerNormalized = studentAnswer.trim().toLowerCase().replace(/\s+/g, ' ');
-          const modelAnswerNormalized = matchedQuestion.answer.trim().toLowerCase().replace(/\s+/g, ' ');
-          
+          // Clean answers
+          const cleanedStudentAnswer = cleanAnswerText(studentAnswer);
+          const cleanedModelAnswer = cleanAnswerText(matchedQuestion.answer);
+
           let evaluation;
-          if (studentAnswerNormalized === modelAnswerNormalized) {
-            console.log('✅ Answers are identical - awarding full marks');
+          if (cleanedStudentAnswer.toLowerCase() === cleanedModelAnswer.toLowerCase()) {
             evaluation = {
               awardedMarks: parseInt(matchedQuestion.mark),
               explanation: 'Perfect match with model answer.'
             };
           } else {
-            // Use AI evaluation for different answers
             evaluation = await compareAnswersWithAI(
-              studentAnswer, 
-              matchedQuestion.answer,
+              cleanedStudentAnswer,
+              cleanedModelAnswer,
               parseInt(matchedQuestion.mark)
             );
           }
-            
-            evaluationResults.push({
-              question: matchedQuestion.question, // Use the model's question text
-              studentQuestion: studentQuestionKey, // Keep original student question
-              studentAnswer,
-              correctAnswer: matchedQuestion.answer,
-              isCorrect: evaluation.awardedMarks === parseInt(matchedQuestion.mark),
-              explanation: evaluation.explanation,
-              marks: evaluation.awardedMarks,
-              totalMarks: parseInt(matchedQuestion.mark)
-            });
-          } catch (error) {
-            console.error(`Error processing question "${studentQuestionKey}":`, error);
-            // Continue with next question even if one fails
-            continue;
-          }}
+
+          evaluationResults.push({
+            question: matchedQuestion.question,
+            studentQuestion: studentQuestionKey,
+            studentAnswer: cleanedStudentAnswer,
+            correctAnswer: cleanedModelAnswer,
+            isCorrect: evaluation.awardedMarks === parseInt(matchedQuestion.mark),
+            explanation: evaluation.explanation,
+            marks: evaluation.awardedMarks,
+            totalMarks: parseInt(matchedQuestion.mark)
+          });
+        } catch (error) {
+          console.error(`Error processing question "${studentQuestionKey}":`, error);
+          continue;
         }
-  console.log("🧾 Evaluation Results Before Total:", evaluationResults.map(e => ({
-  q: e.question,
-  marks: e.marks,
-  total: e.totalMarks
-})));
+      }
 
       // Calculate total score
       const totalScore = evaluationResults.reduce(
         (sum, result) => sum + result.marks, 
         0
       );
-const totalPossible = evaluationResults.reduce(
-  (sum, result) => sum + (parseFloat(result.totalMarks) || 0),
-  0
-);
+      const totalPossible = evaluationResults.reduce(
+        (sum, result) => sum + (parseFloat(result.totalMarks) || 0),
+        0
+      );
 
-  
-      console.log('Evaluation results:', evaluationResults);
-      console.log(`Score: ${totalScore}/${totalPossible}`);
-  
       const finalData = {
         evaluationResults,
         totalScore,
         totalPossible,
-        studentName,
+        studentName: selectedStudent.student_name,
+        rollNumber: selectedStudent.roll_number,
       };
-      // Show results to user
-      
-      navigation.navigate('SaveResultsScreen', { finalData })
-  
+
+      navigation.navigate('SaveResultsScreen', { finalData });
     } catch (error) {
       console.error('Error evaluating answers:', error);
       Alert.alert('Error', 'Failed to evaluate answers');
     } finally {
       setLoading(false);
     }
-  
-    
   };
   
 
+  const qaDict = students[selectedStudentIndex]?.qa_dict || {};
+  const answerCount = Object.keys(qaDict).length;
+
   return (
     <View style={styles.mainContainer}>
-      <ScrollView contentContainerStyle={styles.container}>
-        <Text style={styles.heading}>Submit Answers</Text>
-
-        {/* Student Name Input */}
-        <View style={styles.inputCard}>
-          <Text style={styles.inputLabel}>Student Name:</Text>
-          <TextInput
-            style={styles.textInput}
-            placeholder="Enter student name"
-            value={studentName}
-            onChangeText={setStudentName}
-          />
+      <ScrollView 
+        contentContainerStyle={styles.container}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* Header Section */}
+        <View style={styles.headerSection}>
+          <Text style={styles.heading}>Review Answers</Text>
+          <Text style={styles.subtitle}>
+            {students.length > 0 
+              ? `${students.length} student${students.length > 1 ? 's' : ''} loaded`
+              : 'No students found'}
+          </Text>
         </View>
 
-       {results.map((result, resultIndex) => (
-               <View key={resultIndex} style={styles.resultBlock}>
-                 {result.qa_dict && Object.entries(result.qa_dict).map(([questionKey, answer], pairIndex) => {
-                   const cardKey = `${resultIndex}-${pairIndex}`;
-                   return (
-                     <View key={cardKey} style={styles.card}>
-                       <TouchableOpacity
-                         style={styles.cardHeader}
-                         onPress={() => toggleExpand(cardKey)}
-                       >
-                         <Text style={styles.cardTitle}>
-                           {questionKey}
-                         </Text>
-                         <Text style={styles.expandIcon}>
-                           {expandedItems[cardKey] ? '▲' : '▼'}
-                         </Text>
-                       </TouchableOpacity>
-         
-                       {expandedItems[cardKey] && (
-                         <View style={styles.cardContent}>
-                           <Text style={styles.textLabel}>Answer:</Text>
-                           <Text style={styles.textContent}>{answer}</Text>
-                         </View>
-                       )}
-                     </View>
-                   );
-                 })}
-               </View>
-             ))}
+        {/* Student Selector */}
+        {students.length > 0 && (
+          <View style={styles.studentSection}>
+            <Text style={styles.sectionTitle}>Select Student</Text>
+            <ScrollView 
+              horizontal 
+              showsHorizontalScrollIndicator={false} 
+              contentContainerStyle={styles.studentSelector}
+            >
+              {students.map((student, index) => (
+                <TouchableOpacity
+                  key={`student-${index}`}
+                  style={[
+                    styles.studentCard,
+                    index === selectedStudentIndex && styles.activeStudentCard
+                  ]}
+                  onPress={() => setSelectedStudentIndex(index)}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.studentCardContent}>
+                    <View style={[
+                      styles.studentAvatar,
+                      index === selectedStudentIndex && styles.activeStudentAvatar
+                    ]}>
+                      <Text style={[
+                        styles.studentAvatarText,
+                        index === selectedStudentIndex && styles.activeStudentAvatarText
+                      ]}>
+                        {student.student_name?.charAt(0)?.toUpperCase() || '?'}
+                      </Text>
+                    </View>
+                    <Text 
+                      style={[
+                        styles.studentName, 
+                        index === selectedStudentIndex && styles.activeStudentName
+                      ]}
+                      numberOfLines={1}
+                    >
+                      {student.student_name}
+                    </Text>
+                    <Text style={[
+                      styles.rollNumber, 
+                      index === selectedStudentIndex && styles.activeRoll
+                    ]}>
+                      {student.roll_number}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        )}
 
-       
+        {/* Answers Section */}
+        {selectedStudent && (
+          <View style={styles.answersSection}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>Student Answers</Text>
+              <View style={styles.answerCountBadge}>
+                <Text style={styles.answerCountText}>{answerCount}</Text>
+              </View>
+            </View>
+
+            {answerCount > 0 ? (
+              Object.entries(qaDict).map(([questionKey, answer], pairIndex) => {
+                const cardKey = `${selectedStudentIndex}-${pairIndex}`;
+                const isExpanded = expandedItems[cardKey];
+
+                return (
+                  <View key={cardKey} style={styles.card}>
+                    <TouchableOpacity
+                      style={styles.cardHeader}
+                      onPress={() => toggleExpand(cardKey)}
+                      activeOpacity={0.7}
+                    >
+                      <View style={styles.cardHeaderLeft}>
+                        <View style={styles.questionNumber}>
+                          <Text style={styles.questionNumberText}>{pairIndex + 1}</Text>
+                        </View>
+                        <Text style={styles.cardTitle} numberOfLines={2}>
+                          {questionKey}
+                        </Text>
+                      </View>
+                      <Icon 
+                        name={isExpanded ? "expand-less" : "expand-more"} 
+                        size={24} 
+                        color="#636e72" 
+                      />
+                    </TouchableOpacity>
+
+                    {isExpanded && (
+                      <View style={styles.cardContent}>
+                        <View style={styles.answerContainer}>
+                          <View style={styles.answerLabelContainer}>
+                            <Icon name="description" size={16} color="#007AFF" />
+                            <Text style={styles.textLabel}>Answer</Text>
+                          </View>
+                          <Text style={styles.textContent}>
+                            {cleanAnswerText(answer) || 'No answer provided'}
+                          </Text>
+                        </View>
+                      </View>
+                    )}
+                  </View>
+                );
+              })
+            ) : (
+              <View style={styles.emptyState}>
+                <Icon name="inbox" size={48} color="#b2bec3" />
+                <Text style={styles.emptyStateText}>No answers found</Text>
+                <Text style={styles.emptyStateSubtext}>
+                  This student hasn't submitted any answers yet.
+                </Text>
+              </View>
+            )}
+          </View>
+        )}
+
+        {!selectedStudent && students.length === 0 && (
+          <View style={styles.emptyState}>
+            <Icon name="people-outline" size={48} color="#b2bec3" />
+            <Text style={styles.emptyStateText}>No students loaded</Text>
+            <Text style={styles.emptyStateSubtext}>
+              Please upload student answer PDFs first.
+            </Text>
+          </View>
+        )}
       </ScrollView>
 
       {/* Submit Button */}
-      <View style={styles.buttonContainer}>
-        <TouchableOpacity 
-          style={styles.submitButton}
-          onPress={submitAnswers}
-          disabled={loading}
-        >
-          {loading ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <>
-              <Icon name="cloud-upload" size={20} color="#fff" />
-              <Text style={styles.submitButtonText}>Evaluate Answers</Text>
-            </>
-          )}
-        </TouchableOpacity>
-      </View>
+      {selectedStudent && answerCount > 0 && (
+        <View style={styles.buttonContainer}>
+          <TouchableOpacity
+            style={[styles.submitButton, loading && styles.submitButtonDisabled]}
+            onPress={submitAnswers}
+            disabled={loading || !modelData}
+            activeOpacity={0.8}
+          >
+            {loading ? (
+              <ActivityIndicator color="#fff" size="small" />
+            ) : (
+              <>
+                <Icon name="assessment" size={22} color="#fff" />
+                <Text style={styles.submitButtonText}>Evaluate Answers</Text>
+              </>
+            )}
+          </TouchableOpacity>
+        </View>
+      )}
     </View>
   );
-};
+}
+
 
 const styles = StyleSheet.create({
   mainContainer: {
     flex: 1,
-    backgroundColor: '#f5f5f5'
+    backgroundColor: '#f4f6f8',
   },
   container: {
     padding: 20,
-    paddingBottom: 100
+    paddingBottom: 100,
+  },
+  headerSection: {
+    marginBottom: 24,
+    alignItems: 'center',
   },
   heading: {
-    fontSize: 22,
-    fontWeight: 'bold',
-    marginBottom: 20,
-    color: '#333',
+    fontSize: 28,
+    fontWeight: '700',
+    color: '#2d3436',
+    marginBottom: 6,
+  },
+  subtitle: {
+    fontSize: 15,
+    color: '#636e72',
     textAlign: 'center',
   },
-  inputCard: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
+  studentSection: {
+    marginBottom: 24,
   },
-  answerCard: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  cardTitle: {
-    fontSize: 16,
+  sectionTitle: {
+    fontSize: 18,
     fontWeight: '600',
-    color: '#444',
+    color: '#2d3436',
     marginBottom: 12,
   },
-  inputGroup: {
+  sectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
     marginBottom: 12,
   },
-  inputLabel: {
-    fontSize: 14,
-    color: '#555',
+  answerCountBadge: {
+    backgroundColor: '#007AFF',
+    borderRadius: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    minWidth: 32,
+    alignItems: 'center',
+  },
+  answerCountText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  studentSelector: {
+    paddingVertical: 4,
+  },
+  studentCard: {
+    backgroundColor: '#fff',
+    borderRadius: 14,
+    marginRight: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 3,
+    minWidth: 100,
+  },
+  activeStudentCard: {
+    backgroundColor: '#007AFF',
+    shadowOpacity: 0.2,
+    elevation: 5,
+  },
+  studentCardContent: {
+    padding: 14,
+    alignItems: 'center',
+  },
+  studentAvatar: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#e9ecef',
+    justifyContent: 'center',
+    alignItems: 'center',
     marginBottom: 8,
   },
-  textInput: {
-    borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 8,
-    padding: 12,
-    fontSize: 15,
-    color: '#333',
-    backgroundColor: '#f9f9f9',
-    minHeight: 100,
-    textAlignVertical: 'top',
+  activeStudentAvatar: {
+    backgroundColor: 'rgba(255, 255, 255, 0.25)',
   },
-  addButton: {
+  studentAvatarText: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#2d3436',
+  },
+  activeStudentAvatarText: {
+    color: '#fff',
+  },
+  studentName: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#2d3436',
+    marginBottom: 4,
+    textAlign: 'center',
+    maxWidth: 100,
+  },
+  activeStudentName: {
+    color: '#fff',
+  },
+  rollNumber: {
+    fontSize: 12,
+    color: '#636e72',
+    textAlign: 'center',
+  },
+  activeRoll: {
+    color: 'rgba(255, 255, 255, 0.9)',
+  },
+  answersSection: {
+    marginBottom: 20,
+  },
+  card: {
+    backgroundColor: '#fff',
+    borderRadius: 14,
+    marginBottom: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 3,
+    overflow: 'hidden',
+  },
+  cardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 16,
+  },
+  cardHeaderLeft: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    padding: 16,
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#007AFF',
-    marginTop: 8,
+    flex: 1,
+    marginRight: 12,
   },
-  addButtonText: {
+  questionNumber: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#e9ecef',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  questionNumberText: {
+    fontSize: 13,
+    fontWeight: '700',
     color: '#007AFF',
-    fontSize: 16,
+  },
+  cardTitle: {
+    fontSize: 15,
     fontWeight: '600',
-    marginLeft: 8,
+    color: '#2d3436',
+    flex: 1,
+    lineHeight: 20,
+  },
+  cardContent: {
+    paddingHorizontal: 16,
+    paddingBottom: 16,
+  },
+  answerContainer: {
+    backgroundColor: '#f8f9fa',
+    borderRadius: 10,
+    padding: 14,
+    borderLeftWidth: 3,
+    borderLeftColor: '#007AFF',
+  },
+  answerLabelContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  textLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#007AFF',
+    marginLeft: 6,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  textContent: {
+    fontSize: 14,
+    color: '#2d3436',
+    lineHeight: 22,
   },
   buttonContainer: {
     position: 'absolute',
-    bottom: 20,
-    left: 20,
-    right: 20,
+    bottom: 0,
+    left: 0,
+    right: 0,
+    padding: 20,
+    backgroundColor: '#f4f6f8',
+    borderTopWidth: 1,
+    borderTopColor: '#e9ecef',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 5,
   },
   submitButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#007AFF',
-    padding: 16,
-    borderRadius: 12,
-    elevation: 3,
+    paddingVertical: 16,
+    paddingHorizontal: 24,
+    borderRadius: 14,
+    shadowColor: '#007AFF',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 5,
+  },
+  submitButtonDisabled: {
+    backgroundColor: '#b2bec3',
+    shadowOpacity: 0,
+    elevation: 2,
   },
   submitButtonText: {
     color: '#fff',
-    fontSize: 16,
+    fontSize: 17,
     fontWeight: '600',
     marginLeft: 8,
   },
-  cardContent: {
-    padding: 15,
+  emptyState: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 60,
+    paddingHorizontal: 40,
   },
-  textLabel: {
-    fontSize: 14,
+  emptyStateText: {
+    fontSize: 18,
     fontWeight: '600',
-    color: '#555',
+    color: '#2d3436',
+    marginTop: 16,
     marginBottom: 8,
   },
-  textContent: {
+  emptyStateSubtext: {
     fontSize: 14,
-    color: '#333',
+    color: '#636e72',
+    textAlign: 'center',
     lineHeight: 20,
-    backgroundColor: '#f9f9f9',
-    padding: 10,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#e0e0e0',
-  },
-  resultBlock: {
-    marginBottom: 15,
-  },
-  card: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    marginBottom: 15,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  cardHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 15,
-    borderBottomWidth: 1,
-    borderBottomColor: '#eee',
   },
 });
 
