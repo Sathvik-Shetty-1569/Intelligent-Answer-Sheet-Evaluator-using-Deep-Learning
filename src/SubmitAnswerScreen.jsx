@@ -1,5 +1,13 @@
-import React, { useEffect, useState } from 'react';
-import { View, ScrollView, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  View,
+  ScrollView,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  ActivityIndicator,
+  Alert
+} from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import { db } from '../firebaseConfig';
 import { getDoc, doc } from 'firebase/firestore';
@@ -7,15 +15,20 @@ import colabServerService from './services/colabServerService';
 
 const SubmitAnswerScreen = ({ route, navigation }) => {
   const { modelId, students = [] } = route.params || {};
+
   const [expandedItems, setExpandedItems] = useState({});
   const [loading, setLoading] = useState(false);
   const [modelData, setModelData] = useState(null);
   const [selectedStudentIndex, setSelectedStudentIndex] = useState(0);
-  const selectedStudent = students.length > 0 ? students[selectedStudentIndex] : null;
+
+  const selectedStudent =
+    Array.isArray(students) && students.length > 0 ? students[selectedStudentIndex] : null;
 
   useEffect(() => {
     const fetchData = async () => {
       try {
+        if (!modelId) return;
+
         const ModelRef = doc(db, 'models', modelId);
         const ModelSnap = await getDoc(ModelRef);
 
@@ -31,18 +44,18 @@ const SubmitAnswerScreen = ({ route, navigation }) => {
 
     fetchData();
   }, [modelId]);
-  
+
   const cleanAnswerText = (text) => {
     if (!text) return '';
-    return text
-      .replace(/\r?\n|\r/g, ' ')     // Remove new lines
-      .replace(/\s+/g, ' ')          // Replace multiple spaces with single space
-      .replace(/^[^\w]+/, '')        // Remove starting punctuation/non-word chars
+    return String(text)
+      .replace(/\r?\n|\r/g, ' ')
+      .replace(/\s+/g, ' ')
+      .replace(/^[^\w]+/, '')
       .trim();
   };
 
   const toggleExpand = (key) => {
-    setExpandedItems(prev => ({
+    setExpandedItems((prev) => ({
       ...prev,
       [key]: !prev[key]
     }));
@@ -50,7 +63,6 @@ const SubmitAnswerScreen = ({ route, navigation }) => {
 
   const compareAnswersWithAI = async (studentAnswer, modelAnswer, maxMark) => {
     try {
-      // Use your custom Colab-hosted fine-tuned model
       return await colabServerService.compareAnswers(studentAnswer, modelAnswer, maxMark);
     } catch (error) {
       console.error('Colab server comparison error:', error);
@@ -61,92 +73,125 @@ const SubmitAnswerScreen = ({ route, navigation }) => {
     }
   };
 
-  // Submit answers to Firestore
+  // Robust question matching: handles "Q1", "Q.1", "Q 1", "Q1)" etc.
+  const normalizeQuestionKey = (key) => {
+    const s = cleanAnswerText(key).toLowerCase();
+
+    // extract question number if present
+    const m = s.match(/\bq\s*\.?\s*(\d+)\b/);
+    if (m?.[1]) return `q${m[1]}`;
+
+    // if not found, fallback to cleaned text
+    return s;
+  };
+
+  const modelIndex = useMemo(() => {
+    const map = new Map();
+    const arr = Array.isArray(modelData?.data) ? modelData.data : [];
+
+    for (const q of arr) {
+      const k = normalizeQuestionKey(q?.question || '');
+      if (!map.has(k)) map.set(k, q);
+    }
+    return map;
+  }, [modelData]);
+
+  const evaluateOneStudent = async (student) => {
+    const qaDict = student?.qa_dict && typeof student.qa_dict === 'object' ? student.qa_dict : {};
+    const evaluationResults = [];
+
+    for (const [studentQuestionKey, studentAnswer] of Object.entries(qaDict)) {
+      try {
+        const normalizedStudentKey = normalizeQuestionKey(studentQuestionKey);
+
+        // match by normalized key
+        let matchedQuestion = modelIndex.get(normalizedStudentKey);
+
+        // fallback: try exact text match (your old method)
+        if (!matchedQuestion && Array.isArray(modelData?.data)) {
+          matchedQuestion = modelData.data.find(
+            (q) =>
+              cleanAnswerText(q.question).toLowerCase() ===
+              cleanAnswerText(studentQuestionKey).toLowerCase()
+          );
+        }
+
+        if (!matchedQuestion) continue;
+
+        const cleanedStudentAnswer = cleanAnswerText(studentAnswer);
+        const cleanedModelAnswer = cleanAnswerText(matchedQuestion.answer);
+        const maxMark = parseInt(matchedQuestion.mark, 10) || 0;
+
+        let evaluation;
+        if (cleanedStudentAnswer.toLowerCase() === cleanedModelAnswer.toLowerCase()) {
+          evaluation = {
+            awardedMarks: maxMark,
+            explanation: 'Perfect match with model answer.'
+          };
+        } else {
+          evaluation = await compareAnswersWithAI(cleanedStudentAnswer, cleanedModelAnswer, maxMark);
+        }
+
+        const awarded = Math.max(0, Math.min(maxMark, parseInt(evaluation.awardedMarks, 10) || 0));
+
+        evaluationResults.push({
+          question: matchedQuestion.question,
+          studentQuestion: studentQuestionKey,
+          studentAnswer: cleanedStudentAnswer,
+          correctAnswer: cleanedModelAnswer,
+          isCorrect: awarded === maxMark,
+          explanation: evaluation.explanation,
+          marks: awarded,
+          totalMarks: maxMark
+        });
+      } catch (error) {
+        console.error(`Error processing question "${studentQuestionKey}":`, error);
+        continue;
+      }
+    }
+
+    const totalScore = evaluationResults.reduce((sum, r) => sum + (parseFloat(r.marks) || 0), 0);
+    const totalPossible = evaluationResults.reduce(
+      (sum, r) => sum + (parseFloat(r.totalMarks) || 0),
+      0
+    );
+
+    return {
+      evaluationResults,
+      totalScore,
+      totalPossible,
+      studentName: student?.student_name || 'Student',
+      rollNumber: student?.roll_number || '',
+      // keep if you want later
+      raw_text: student?.raw_text || ''
+    };
+  };
+
+  // ✅ NEW: evaluate ALL students and pass batchResults to the SAME SaveResultsScreen
   const submitAnswers = async () => {
     if (!Array.isArray(modelData?.data)) {
       Alert.alert('Error', 'Invalid model data structure');
-      return;
-    }
-    if (!selectedStudent) {
-      Alert.alert('Error', 'No student selected');
       return;
     }
     if (!modelData) {
       Alert.alert('Error', 'Model data not loaded yet');
       return;
     }
-    if (!students.length) {
+    if (!Array.isArray(students) || students.length === 0) {
       Alert.alert('Error', 'No student data found');
       return;
     }
-    
+
     setLoading(true);
     try {
-      // Create an array to store evaluation results
-      const evaluationResults = [];
-      const qaDict = selectedStudent.qa_dict;
-
-      // Compare each question in the student's answers with the model data
-      for (const [studentQuestionKey, studentAnswer] of Object.entries(qaDict)) {
-        try {
-          // Find the matching question...
-          let matchedQuestion = modelData.data.find((q) => q.question.trim().toLowerCase() === studentQuestionKey.trim().toLowerCase());
-
-          if (!matchedQuestion) continue;
-
-          // Clean answers
-          const cleanedStudentAnswer = cleanAnswerText(studentAnswer);
-          const cleanedModelAnswer = cleanAnswerText(matchedQuestion.answer);
-
-          let evaluation;
-          if (cleanedStudentAnswer.toLowerCase() === cleanedModelAnswer.toLowerCase()) {
-            evaluation = {
-              awardedMarks: parseInt(matchedQuestion.mark),
-              explanation: 'Perfect match with model answer.'
-            };
-          } else {
-            evaluation = await compareAnswersWithAI(
-              cleanedStudentAnswer,
-              cleanedModelAnswer,
-              parseInt(matchedQuestion.mark)
-            );
-          }
-
-          evaluationResults.push({
-            question: matchedQuestion.question,
-            studentQuestion: studentQuestionKey,
-            studentAnswer: cleanedStudentAnswer,
-            correctAnswer: cleanedModelAnswer,
-            isCorrect: evaluation.awardedMarks === parseInt(matchedQuestion.mark),
-            explanation: evaluation.explanation,
-            marks: evaluation.awardedMarks,
-            totalMarks: parseInt(matchedQuestion.mark)
-          });
-        } catch (error) {
-          console.error(`Error processing question "${studentQuestionKey}":`, error);
-          continue;
-        }
+      // Evaluate all students sequentially (safer for rate limits)
+      const batchResults = [];
+      for (const student of students) {
+        const result = await evaluateOneStudent(student);
+        batchResults.push(result);
       }
 
-      // Calculate total score
-      const totalScore = evaluationResults.reduce(
-        (sum, result) => sum + result.marks, 
-        0
-      );
-      const totalPossible = evaluationResults.reduce(
-        (sum, result) => sum + (parseFloat(result.totalMarks) || 0),
-        0
-      );
-
-      const finalData = {
-        evaluationResults,
-        totalScore,
-        totalPossible,
-        studentName: selectedStudent.student_name,
-        rollNumber: selectedStudent.roll_number,
-      };
-
-      navigation.navigate('SaveResultsScreen', { finalData });
+      navigation.navigate('SaveResultsScreen', { batchResults });
     } catch (error) {
       console.error('Error evaluating answers:', error);
       Alert.alert('Error', 'Failed to evaluate answers');
@@ -154,70 +199,64 @@ const SubmitAnswerScreen = ({ route, navigation }) => {
       setLoading(false);
     }
   };
-  
 
-  const qaDict = students[selectedStudentIndex]?.qa_dict || {};
+  const qaDict = selectedStudent?.qa_dict || {};
   const answerCount = Object.keys(qaDict).length;
 
   return (
     <View style={styles.mainContainer}>
-      <ScrollView 
-        contentContainerStyle={styles.container}
-        showsVerticalScrollIndicator={false}
-      >
+      <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
         {/* Header Section */}
         <View style={styles.headerSection}>
           <Text style={styles.heading}>Review Answers</Text>
           <Text style={styles.subtitle}>
-            {students.length > 0 
+            {students.length > 0
               ? `${students.length} student${students.length > 1 ? 's' : ''} loaded`
               : 'No students found'}
           </Text>
         </View>
 
-        {/* Student Selector */}
+        {/* Student Selector (kept only for preview/review) */}
         {students.length > 0 && (
           <View style={styles.studentSection}>
-            <Text style={styles.sectionTitle}>Select Student</Text>
-            <ScrollView 
-              horizontal 
-              showsHorizontalScrollIndicator={false} 
+            <Text style={styles.sectionTitle}>Select Student (Preview)</Text>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
               contentContainerStyle={styles.studentSelector}
             >
               {students.map((student, index) => (
                 <TouchableOpacity
                   key={`student-${index}`}
-                  style={[
-                    styles.studentCard,
-                    index === selectedStudentIndex && styles.activeStudentCard
-                  ]}
+                  style={[styles.studentCard, index === selectedStudentIndex && styles.activeStudentCard]}
                   onPress={() => setSelectedStudentIndex(index)}
                   activeOpacity={0.7}
                 >
                   <View style={styles.studentCardContent}>
-                    <View style={[
-                      styles.studentAvatar,
-                      index === selectedStudentIndex && styles.activeStudentAvatar
-                    ]}>
-                      <Text style={[
-                        styles.studentAvatarText,
-                        index === selectedStudentIndex && styles.activeStudentAvatarText
-                      ]}>
+                    <View
+                      style={[
+                        styles.studentAvatar,
+                        index === selectedStudentIndex && styles.activeStudentAvatar
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.studentAvatarText,
+                          index === selectedStudentIndex && styles.activeStudentAvatarText
+                        ]}
+                      >
                         {student.student_name?.charAt(0)?.toUpperCase() || '?'}
                       </Text>
                     </View>
-                    <Text 
+                    <Text
                       style={[
-                        styles.studentName, 
+                        styles.studentName,
                         index === selectedStudentIndex && styles.activeStudentName
                       ]}
                     >
                       {student.student_name}
                     </Text>
-                    <Text style={[
-                      styles.rollNumber, 
-                      index === selectedStudentIndex && styles.activeRoll
-                    ]}>
+                    <Text style={[styles.rollNumber, index === selectedStudentIndex && styles.activeRoll]}>
                       {student.roll_number}
                     </Text>
                   </View>
@@ -257,11 +296,7 @@ const SubmitAnswerScreen = ({ route, navigation }) => {
                           {questionKey}
                         </Text>
                       </View>
-                      <Icon 
-                        name={isExpanded ? "expand-less" : "expand-more"} 
-                        size={24} 
-                        color="#636e72" 
-                      />
+                      <Icon name={isExpanded ? 'expand-less' : 'expand-more'} size={24} color="#636e72" />
                     </TouchableOpacity>
 
                     {isExpanded && (
@@ -285,7 +320,7 @@ const SubmitAnswerScreen = ({ route, navigation }) => {
                 <Icon name="inbox" size={48} color="#b2bec3" />
                 <Text style={styles.emptyStateText}>No answers found</Text>
                 <Text style={styles.emptyStateSubtext}>
-                  This student hasn't submitted any answers yet.
+                  This student hasn&apos;t submitted any answers yet.
                 </Text>
               </View>
             )}
@@ -296,18 +331,16 @@ const SubmitAnswerScreen = ({ route, navigation }) => {
           <View style={styles.emptyState}>
             <Icon name="people-outline" size={48} color="#b2bec3" />
             <Text style={styles.emptyStateText}>No students loaded</Text>
-            <Text style={styles.emptyStateSubtext}>
-              Please upload student answer PDFs first.
-            </Text>
+            <Text style={styles.emptyStateSubtext}>Please upload student answer PDFs first.</Text>
           </View>
         )}
       </ScrollView>
 
-      {/* Submit Button */}
-      {selectedStudent && answerCount > 0 && (
+      {/* Submit Button - now evaluates ALL students */}
+      {students.length > 0 && (
         <View style={styles.buttonContainer}>
           <TouchableOpacity
-            style={[styles.submitButton, loading && styles.submitButtonDisabled]}
+            style={[styles.submitButton, (loading || !modelData) && styles.submitButtonDisabled]}
             onPress={submitAnswers}
             disabled={loading || !modelData}
             activeOpacity={0.8}
@@ -317,7 +350,7 @@ const SubmitAnswerScreen = ({ route, navigation }) => {
             ) : (
               <>
                 <Icon name="assessment" size={22} color="#fff" />
-                <Text style={styles.submitButtonText}>Evaluate Answers</Text>
+                <Text style={styles.submitButtonText}>Evaluate All Students</Text>
               </>
             )}
           </TouchableOpacity>
@@ -325,47 +358,46 @@ const SubmitAnswerScreen = ({ route, navigation }) => {
       )}
     </View>
   );
-}
-
+};
 
 const styles = StyleSheet.create({
   mainContainer: {
     flex: 1,
-    backgroundColor: '#f4f6f8',
+    backgroundColor: '#f4f6f8'
   },
   container: {
     padding: 20,
-    paddingBottom: 100,
+    paddingBottom: 100
   },
   headerSection: {
     marginBottom: 24,
-    alignItems: 'center',
+    alignItems: 'center'
   },
   heading: {
     fontSize: 28,
     fontWeight: '700',
     color: '#2d3436',
-    marginBottom: 6,
+    marginBottom: 6
   },
   subtitle: {
     fontSize: 15,
     color: '#636e72',
-    textAlign: 'center',
+    textAlign: 'center'
   },
   studentSection: {
-    marginBottom: 24,
+    marginBottom: 24
   },
   sectionTitle: {
     fontSize: 18,
     fontWeight: '600',
     color: '#2d3436',
-    marginBottom: 12,
+    marginBottom: 12
   },
   sectionHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 12,
+    marginBottom: 12
   },
   answerCountBadge: {
     backgroundColor: '#007AFF',
@@ -373,15 +405,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 4,
     minWidth: 32,
-    alignItems: 'center',
+    alignItems: 'center'
   },
   answerCountText: {
     color: '#fff',
     fontSize: 13,
-    fontWeight: '600',
+    fontWeight: '600'
   },
   studentSelector: {
-    paddingVertical: 4,
+    paddingVertical: 4
   },
   studentCard: {
     backgroundColor: '#fff',
@@ -392,16 +424,16 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.08,
     shadowRadius: 8,
     elevation: 3,
-    minWidth: 100,
+    minWidth: 100
   },
   activeStudentCard: {
     backgroundColor: '#007AFF',
     shadowOpacity: 0.2,
-    elevation: 5,
+    elevation: 5
   },
   studentCardContent: {
     padding: 14,
-    alignItems: 'center',
+    alignItems: 'center'
   },
   studentAvatar: {
     width: 48,
@@ -410,39 +442,39 @@ const styles = StyleSheet.create({
     backgroundColor: '#e9ecef',
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 8,
+    marginBottom: 8
   },
   activeStudentAvatar: {
-    backgroundColor: 'rgba(255, 255, 255, 0.25)',
+    backgroundColor: 'rgba(255, 255, 255, 0.25)'
   },
   studentAvatarText: {
     fontSize: 20,
     fontWeight: '700',
-    color: '#2d3436',
+    color: '#2d3436'
   },
   activeStudentAvatarText: {
-    color: '#fff',
+    color: '#fff'
   },
   studentName: {
     fontSize: 14,
     fontWeight: '600',
     color: '#2d3436',
     marginBottom: 4,
-    textAlign: 'center',
+    textAlign: 'center'
   },
   activeStudentName: {
-    color: '#fff',
+    color: '#fff'
   },
   rollNumber: {
     fontSize: 12,
     color: '#636e72',
-    textAlign: 'center',
+    textAlign: 'center'
   },
   activeRoll: {
-    color: 'rgba(255, 255, 255, 0.9)',
+    color: 'rgba(255, 255, 255, 0.9)'
   },
   answersSection: {
-    marginBottom: 20,
+    marginBottom: 20
   },
   card: {
     backgroundColor: '#fff',
@@ -453,19 +485,19 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.08,
     shadowRadius: 8,
     elevation: 3,
-    overflow: 'hidden',
+    overflow: 'hidden'
   },
   cardHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 16,
+    padding: 16
   },
   cardHeaderLeft: {
     flexDirection: 'row',
     alignItems: 'center',
     flex: 1,
-    marginRight: 12,
+    marginRight: 12
   },
   questionNumber: {
     width: 28,
@@ -474,35 +506,35 @@ const styles = StyleSheet.create({
     backgroundColor: '#e9ecef',
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 12,
+    marginRight: 12
   },
   questionNumberText: {
     fontSize: 13,
     fontWeight: '700',
-    color: '#007AFF',
+    color: '#007AFF'
   },
   cardTitle: {
     fontSize: 15,
     fontWeight: '600',
     color: '#2d3436',
     flex: 1,
-    lineHeight: 20,
+    lineHeight: 20
   },
   cardContent: {
     paddingHorizontal: 16,
-    paddingBottom: 16,
+    paddingBottom: 16
   },
   answerContainer: {
     backgroundColor: '#f8f9fa',
     borderRadius: 10,
     padding: 14,
     borderLeftWidth: 3,
-    borderLeftColor: '#007AFF',
+    borderLeftColor: '#007AFF'
   },
   answerLabelContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 10,
+    marginBottom: 10
   },
   textLabel: {
     fontSize: 13,
@@ -510,12 +542,12 @@ const styles = StyleSheet.create({
     color: '#007AFF',
     marginLeft: 6,
     textTransform: 'uppercase',
-    letterSpacing: 0.5,
+    letterSpacing: 0.5
   },
   textContent: {
     fontSize: 14,
     color: '#2d3436',
-    lineHeight: 22,
+    lineHeight: 22
   },
   buttonContainer: {
     position: 'absolute',
@@ -530,7 +562,7 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: -2 },
     shadowOpacity: 0.05,
     shadowRadius: 8,
-    elevation: 5,
+    elevation: 5
   },
   submitButton: {
     flexDirection: 'row',
@@ -544,38 +576,38 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 8,
-    elevation: 5,
+    elevation: 5
   },
   submitButtonDisabled: {
     backgroundColor: '#b2bec3',
     shadowOpacity: 0,
-    elevation: 2,
+    elevation: 2
   },
   submitButtonText: {
     color: '#fff',
     fontSize: 17,
     fontWeight: '600',
-    marginLeft: 8,
+    marginLeft: 8
   },
   emptyState: {
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: 60,
-    paddingHorizontal: 40,
+    paddingHorizontal: 40
   },
   emptyStateText: {
     fontSize: 18,
     fontWeight: '600',
     color: '#2d3436',
     marginTop: 16,
-    marginBottom: 8,
+    marginBottom: 8
   },
   emptyStateSubtext: {
     fontSize: 14,
     color: '#636e72',
     textAlign: 'center',
-    lineHeight: 20,
-  },
+    lineHeight: 20
+  }
 });
 
 export default SubmitAnswerScreen;

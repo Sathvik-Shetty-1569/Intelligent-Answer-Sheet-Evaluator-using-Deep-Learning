@@ -6,8 +6,8 @@
 class ColabServerService {
   constructor() {
     // Your actual ngrok URL from Colab
-    // this.baseUrl = 'https://overvigorous-carina-unoccasionally.ngrok-free.dev';
-    this.baseUrl = 'http://192.168.0.198:5001'
+    this.baseUrl = 'https://overvigorous-carina-unoccasionally.ngrok-free.dev';
+    // this.baseUrl = 'http://192.168.0.198:5001'
     
     this.headers = {
       'Content-Type': 'application/json',
