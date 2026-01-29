@@ -99,75 +99,82 @@ const SubmitAnswerScreen = ({ route, navigation }) => {
   const evaluateOneStudent = async (student) => {
     const qaDict = student?.qa_dict && typeof student.qa_dict === 'object' ? student.qa_dict : {};
     const evaluationResults = [];
-
-    for (const [studentQuestionKey, studentAnswer] of Object.entries(qaDict)) {
+  
+    const modelArr = Array.isArray(modelData?.data) ? modelData.data : [];
+  
+    // ✅ model total (fixed)
+    const modelTotalPossible = modelArr.reduce((sum, q) => sum + Number(q?.mark || 0), 0) || 1;
+  
+    // ✅ create a normalized student map for fast lookup
+    const studentMap = new Map();
+    for (const [k, v] of Object.entries(qaDict)) {
+      studentMap.set(normalizeQuestionKey(k), v);
+    }
+  
+    // ✅ IMPORTANT: iterate over MODEL questions (not student attempts)
+    for (const mq of modelArr) {
       try {
-        const normalizedStudentKey = normalizeQuestionKey(studentQuestionKey);
-
-        // match by normalized key
-        let matchedQuestion = modelIndex.get(normalizedStudentKey);
-
-        // fallback: try exact text match (your old method)
-        if (!matchedQuestion && Array.isArray(modelData?.data)) {
-          matchedQuestion = modelData.data.find(
-            (q) =>
-              cleanAnswerText(q.question).toLowerCase() ===
-              cleanAnswerText(studentQuestionKey).toLowerCase()
-          );
+        const modelKey = normalizeQuestionKey(mq?.question || '');
+        const maxMark = parseInt(mq?.mark, 10) || 0;
+  
+        const rawStudentAnswer = studentMap.get(modelKey) || ''; // empty if not attempted
+        const cleanedStudentAnswer = cleanAnswerText(rawStudentAnswer);
+        const cleanedModelAnswer = cleanAnswerText(mq?.answer);
+  
+        let evaluation = { awardedMarks: 0, explanation: 'Not attempted.' };
+  
+        if (cleanedStudentAnswer) {
+          if (cleanedStudentAnswer.toLowerCase() === cleanedModelAnswer.toLowerCase()) {
+            evaluation = { awardedMarks: maxMark, explanation: 'Perfect match with model answer.' };
+          } else {
+            evaluation = await compareAnswersWithAI(cleanedStudentAnswer, cleanedModelAnswer, maxMark);
+          }
         }
-
-        if (!matchedQuestion) continue;
-
-        const cleanedStudentAnswer = cleanAnswerText(studentAnswer);
-        const cleanedModelAnswer = cleanAnswerText(matchedQuestion.answer);
-        const maxMark = parseInt(matchedQuestion.mark, 10) || 0;
-
-        let evaluation;
-        if (cleanedStudentAnswer.toLowerCase() === cleanedModelAnswer.toLowerCase()) {
-          evaluation = {
-            awardedMarks: maxMark,
-            explanation: 'Perfect match with model answer.'
-          };
-        } else {
-          evaluation = await compareAnswersWithAI(cleanedStudentAnswer, cleanedModelAnswer, maxMark);
-        }
-
+  
         const awarded = Math.max(0, Math.min(maxMark, parseInt(evaluation.awardedMarks, 10) || 0));
-
+  
         evaluationResults.push({
-          question: matchedQuestion.question,
-          studentQuestion: studentQuestionKey,
-          studentAnswer: cleanedStudentAnswer,
+          question: mq?.question || 'Question',
+          studentQuestion: mq?.question || 'Question',
+          studentAnswer: cleanedStudentAnswer,     // will be '' if skipped
           correctAnswer: cleanedModelAnswer,
-          isCorrect: awarded === maxMark,
+          isCorrect: awarded === maxMark && maxMark > 0,
           explanation: evaluation.explanation,
           marks: awarded,
           totalMarks: maxMark
         });
-      } catch (error) {
-        console.error(`Error processing question "${studentQuestionKey}":`, error);
-        continue;
+      } catch (err) {
+        console.error('Error processing model question:', mq?.question, err);
+  
+        // push a safe fallback so totals don't break
+        evaluationResults.push({
+          question: mq?.question || 'Question',
+          studentQuestion: mq?.question || 'Question',
+          studentAnswer: '',
+          correctAnswer: cleanAnswerText(mq?.answer),
+          isCorrect: false,
+          explanation: 'Error during evaluation, defaulted to 0.',
+          marks: 0,
+          totalMarks: parseInt(mq?.mark, 10) || 0
+        });
       }
     }
-
-    const totalScore = evaluationResults.reduce((sum, r) => sum + (parseFloat(r.marks) || 0), 0);
-    const totalPossible = evaluationResults.reduce(
-      (sum, r) => sum + (parseFloat(r.totalMarks) || 0),
-      0
-    );
-
+  
+    // ✅ obtained marks from awarded marks
+    const totalScore = evaluationResults.reduce((sum, r) => sum + (Number(r.marks) || 0), 0);
+  
     return {
       evaluationResults,
-      totalScore,
-      totalPossible,
+      totalScore,                     // ✅ FIXED
+      totalPossible: modelTotalPossible,      // ✅ ALWAYS model total
+      modelTotalPossible,             // optional but nice
       studentName: student?.student?.name || 'Student',
-rollNumber: student?.student?.roll || '',
-email: student?.student?.email || 'N/A',
-
-      // keep if you want later
+      rollNumber: student?.student?.roll || '',
+      email: student?.student?.email || 'N/A',
       raw_text: student?.raw_text || ''
     };
   };
+  
 
   // ✅ NEW: evaluate ALL students and pass batchResults to the SAME SaveResultsScreen
   const submitAnswers = async () => {
