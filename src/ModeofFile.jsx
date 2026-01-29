@@ -66,7 +66,6 @@ const ModeofFile = ({ navigation }) => {
       );
 
       // Handle response
-      console.log('Server response:', response.data);
 
       navigation.navigate('ResultsScreen', {
         results: [response.data], // Wrap in array for compatibility

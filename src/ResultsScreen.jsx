@@ -22,14 +22,19 @@ const ResultsScreen = ({ route, navigation }) => {
   // Debug: Log route params on mount
   useEffect(() => {
     console.log('=== ResultsScreen Mounted ===');
-    console.log('Route params:', route.params);
-    console.log('results:', results);
-    console.log('isModelAnswer:', isModelAnswer);
-    if (results?.[0]) {
-      console.log('results[0] keys:', Object.keys(results[0]));
-      console.log('results[0].qa_dict exists:', !!results[0].qa_dict);
-    }
+  
+    // 1) Raw route params
+    console.log('Route params (raw):', route.params);
+  
+    // 2) Pretty print route params (BEST)
+    console.log(
+      'Route params (pretty):\n',
+      JSON.stringify(route.params, null, 2)
+    );
+  
+    
   }, []);
+  
 
   const handleMarkChange = (questionKey, value) => {
     setMarks(prev => ({
@@ -140,7 +145,8 @@ const ResultsScreen = ({ route, navigation }) => {
       // Save to Firebase
       console.log('Attempting to save to Firestore...');
       console.log('Collection path: models');
-      
+      console.log("🔥 firebaseData FULL:\n", JSON.stringify(firebaseData, null, 2));
+
       try {
         const docRef = await addDoc(collection(db, 'models'), firebaseData);
         console.log(`✅ Saved to Firestore as ${modelName}`);
