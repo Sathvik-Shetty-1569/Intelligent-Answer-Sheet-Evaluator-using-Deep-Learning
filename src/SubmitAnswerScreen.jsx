@@ -160,8 +160,10 @@ const SubmitAnswerScreen = ({ route, navigation }) => {
       evaluationResults,
       totalScore,
       totalPossible,
-      studentName: student?.student_name || 'Student',
-      rollNumber: student?.roll_number || '',
+      studentName: student?.student?.name || 'Student',
+rollNumber: student?.student?.roll || '',
+email: student?.student?.email || 'N/A',
+
       // keep if you want later
       raw_text: student?.raw_text || ''
     };
@@ -225,107 +227,130 @@ const SubmitAnswerScreen = ({ route, navigation }) => {
               showsHorizontalScrollIndicator={false}
               contentContainerStyle={styles.studentSelector}
             >
-              {students.map((student, index) => (
-                <TouchableOpacity
-                  key={`student-${index}`}
-                  style={[styles.studentCard, index === selectedStudentIndex && styles.activeStudentCard]}
-                  onPress={() => setSelectedStudentIndex(index)}
-                  activeOpacity={0.7}
-                >
-                  <View style={styles.studentCardContent}>
-                    <View
-                      style={[
-                        styles.studentAvatar,
-                        index === selectedStudentIndex && styles.activeStudentAvatar
-                      ]}
-                    >
-                      <Text
-                        style={[
-                          styles.studentAvatarText,
-                          index === selectedStudentIndex && styles.activeStudentAvatarText
-                        ]}
-                      >
-                        {student.student_name?.charAt(0)?.toUpperCase() || '?'}
-                      </Text>
-                    </View>
-                    <Text
-                      style={[
-                        styles.studentName,
-                        index === selectedStudentIndex && styles.activeStudentName
-                      ]}
-                    >
-                      {student.student_name}
-                    </Text>
-                    <Text style={[styles.rollNumber, index === selectedStudentIndex && styles.activeRoll]}>
-                      {student.roll_number}
-                    </Text>
-                  </View>
-                </TouchableOpacity>
-              ))}
+              {students.map((student, index) => {
+  const info = student?.student || {};
+  return (
+    <TouchableOpacity
+      key={`student-${index}`}
+      style={[styles.studentCard, index === selectedStudentIndex && styles.activeStudentCard]}
+      onPress={() => setSelectedStudentIndex(index)}
+      activeOpacity={0.7}
+    >
+      <View style={styles.studentCardContent}>
+        <View
+          style={[
+            styles.studentAvatar,
+            index === selectedStudentIndex && styles.activeStudentAvatar
+          ]}
+        >
+          <Text
+            style={[
+              styles.studentAvatarText,
+              index === selectedStudentIndex && styles.activeStudentAvatarText
+            ]}
+          >
+            {info.name?.charAt(0)?.toUpperCase() || '?'}
+          </Text>
+        </View>
+
+        <Text
+          style={[
+            styles.studentName,
+            index === selectedStudentIndex && styles.activeStudentName
+          ]}
+        >
+          {info.name || 'Unknown'}
+        </Text>
+
+        <Text style={[styles.rollNumber, index === selectedStudentIndex && styles.activeRoll]}>
+          {info.roll || ''}
+        </Text>
+      </View>
+    </TouchableOpacity>
+  );
+})}
+
             </ScrollView>
           </View>
         )}
 
         {/* Answers Section */}
         {selectedStudent && (
-          <View style={styles.answersSection}>
-            <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>Student Answers</Text>
-              <View style={styles.answerCountBadge}>
-                <Text style={styles.answerCountText}>{answerCount}</Text>
-              </View>
-            </View>
+  <>
+    {(() => {
+      const info = selectedStudent?.student || {};
+      return (
+        <View style={styles.studentInfoCard}>
+          <Text style={styles.studentInfoName}>{info.name || 'Unknown Student'}</Text>
+          <Text style={styles.studentInfoLine}>Roll: {info.roll || 'N/A'}</Text>
+          <Text style={styles.studentInfoLine}>Email: {info.email || 'N/A'}</Text>
+        </View>
+      );
+    })()}
 
-            {answerCount > 0 ? (
-              Object.entries(qaDict).map(([questionKey, answer], pairIndex) => {
-                const cardKey = `${selectedStudentIndex}-${pairIndex}`;
-                const isExpanded = expandedItems[cardKey];
+    <View style={styles.answersSection}>
+      <View style={styles.sectionHeader}>
+        <Text style={styles.sectionTitle}>Student Answers</Text>
+        <View style={styles.answerCountBadge}>
+          <Text style={styles.answerCountText}>{answerCount}</Text>
+        </View>
+      </View>
 
-                return (
-                  <View key={cardKey} style={styles.card}>
-                    <TouchableOpacity
-                      style={styles.cardHeader}
-                      onPress={() => toggleExpand(cardKey)}
-                      activeOpacity={0.7}
-                    >
-                      <View style={styles.cardHeaderLeft}>
-                        <View style={styles.questionNumber}>
-                          <Text style={styles.questionNumberText}>{pairIndex + 1}</Text>
-                        </View>
-                        <Text style={styles.cardTitle} numberOfLines={2}>
-                          {questionKey}
-                        </Text>
-                      </View>
-                      <Icon name={isExpanded ? 'expand-less' : 'expand-more'} size={24} color="#636e72" />
-                    </TouchableOpacity>
+      {answerCount > 0 ? (
+        Object.entries(qaDict).map(([questionKey, answer], pairIndex) => {
+          const cardKey = `${selectedStudentIndex}-${pairIndex}`;
+          const isExpanded = expandedItems[cardKey];
 
-                    {isExpanded && (
-                      <View style={styles.cardContent}>
-                        <View style={styles.answerContainer}>
-                          <View style={styles.answerLabelContainer}>
-                            <Icon name="description" size={16} color="#007AFF" />
-                            <Text style={styles.textLabel}>Answer</Text>
-                          </View>
-                          <Text style={styles.textContent}>
-                            {cleanAnswerText(answer) || 'No answer provided'}
-                          </Text>
-                        </View>
-                      </View>
-                    )}
+          return (
+            <View key={cardKey} style={styles.card}>
+              <TouchableOpacity
+                style={styles.cardHeader}
+                onPress={() => toggleExpand(cardKey)}
+                activeOpacity={0.7}
+              >
+                <View style={styles.cardHeaderLeft}>
+                  <View style={styles.questionNumber}>
+                    <Text style={styles.questionNumberText}>{pairIndex + 1}</Text>
                   </View>
-                );
-              })
-            ) : (
-              <View style={styles.emptyState}>
-                <Icon name="inbox" size={48} color="#b2bec3" />
-                <Text style={styles.emptyStateText}>No answers found</Text>
-                <Text style={styles.emptyStateSubtext}>
-                  This student hasn&apos;t submitted any answers yet.
-                </Text>
-              </View>
-            )}
-          </View>
-        )}
+                  <Text style={styles.cardTitle} numberOfLines={2}>
+                    {questionKey}
+                  </Text>
+                </View>
+                <Icon
+                  name={isExpanded ? 'expand-less' : 'expand-more'}
+                  size={24}
+                  color="#636e72"
+                />
+              </TouchableOpacity>
+
+              {isExpanded && (
+                <View style={styles.cardContent}>
+                  <View style={styles.answerContainer}>
+                    <View style={styles.answerLabelContainer}>
+                      <Icon name="description" size={16} color="#007AFF" />
+                      <Text style={styles.textLabel}>Answer</Text>
+                    </View>
+                    <Text style={styles.textContent}>
+                      {cleanAnswerText(answer) || 'No answer provided'}
+                    </Text>
+                  </View>
+                </View>
+              )}
+            </View>
+          );
+        })
+      ) : (
+        <View style={styles.emptyState}>
+          <Icon name="inbox" size={48} color="#b2bec3" />
+          <Text style={styles.emptyStateText}>No answers found</Text>
+          <Text style={styles.emptyStateSubtext}>
+            This student hasn&apos;t submitted any answers yet.
+          </Text>
+        </View>
+      )}
+    </View>
+  </>
+)}
 
         {!selectedStudent && students.length === 0 && (
           <View style={styles.emptyState}>
@@ -335,6 +360,9 @@ const SubmitAnswerScreen = ({ route, navigation }) => {
           </View>
         )}
       </ScrollView>
+
+   
+
 
       {/* Submit Button - now evaluates ALL students */}
       {students.length > 0 && (
@@ -607,7 +635,30 @@ const styles = StyleSheet.create({
     color: '#636e72',
     textAlign: 'center',
     lineHeight: 20
-  }
+  },
+  studentInfoCard: {
+    backgroundColor: '#fff',
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  studentInfoName: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#2d3436',
+    marginBottom: 6,
+  },
+  studentInfoLine: {
+    fontSize: 13,
+    color: '#636e72',
+    marginTop: 2,
+  },
+  
 });
 
 export default SubmitAnswerScreen;
